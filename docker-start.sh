@@ -105,7 +105,7 @@ check_environment() {
 check_ports() {
     log_header "检查端口占用"
     
-    local ports=(8000 3000 6379 5555)
+    local ports=(8001 3000 6379 5555)
     local occupied_ports=()
     
     for port in "${ports[@]}"; do
@@ -162,8 +162,8 @@ show_status() {
     
     echo -e "\n${CYAN}🌐 访问地址:${NC}"
     echo -e "  前端界面: http://localhost:3000"
-    echo -e "  后端API:  http://localhost:8000"
-    echo -e "  API文档:  http://localhost:8000/docs"
+    echo -e "  后端API:  http://localhost:8001"
+    echo -e "  API文档:  http://localhost:8001/docs"
     echo -e "  Flower监控: http://localhost:5555"
     
     echo -e "\n${CYAN}📝 常用命令:${NC}"

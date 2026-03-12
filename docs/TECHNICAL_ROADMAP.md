@@ -360,7 +360,7 @@ class ProcessingSocket {
   private socket: Socket;
   
   constructor(projectId: string) {
-    this.socket = io('ws://localhost:8000', {
+    this.socket = io('ws://localhost:8001', {
       query: { project_id: projectId }
     });
     

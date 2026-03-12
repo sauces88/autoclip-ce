@@ -146,7 +146,7 @@ metadata = {
 
 3. **测试API**:
    ```bash
-   curl -s http://localhost:8000/api/v1/upload/records | jq .
+   curl -s http://localhost:8001/api/v1/upload/records | jq .
    ```
 
 ## 性能优化

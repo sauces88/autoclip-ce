@@ -44,8 +44,8 @@ docker-compose logs -f
 ### 访问服务
 
 - **前端界面**: http://localhost:3000
-- **后端API**: http://localhost:8000
-- **API文档**: http://localhost:8000/docs
+- **后端API**: http://localhost:8001
+- **API文档**: http://localhost:8001/docs
 - **Flower监控**: http://localhost:5555
 
 ## 🏭 生产环境部署
@@ -158,7 +158,7 @@ PROJECT_DIR=./data/projects
 ### 服务配置
 
 #### 主应用服务
-- **端口**: 8000 (后端), 3000 (前端)
+- **端口**: 8001 (后端), 3000 (前端)
 - **健康检查**: `/api/v1/health/`
 - **重启策略**: `unless-stopped`
 
@@ -229,12 +229,12 @@ docker-compose restart autoclip
 
 ```bash
 # 检查端口占用
-netstat -tulpn | grep :8000
+netstat -tulpn | grep :8001
 
 # 修改端口映射
 # 在docker-compose.yml中修改ports配置
 ports:
-  - "8001:8000"  # 将本地8001端口映射到容器8000端口
+  - "8001:8001"  # 将本地8001端口映射到容器8001端口
 ```
 
 #### 3. 内存不足
@@ -341,7 +341,7 @@ if ! docker-compose ps | grep -q "Up"; then
 fi
 
 # 检查健康状态
-if ! curl -f http://localhost:8000/api/v1/health/ >/dev/null 2>&1; then
+if ! curl -f http://localhost:8001/api/v1/health/ >/dev/null 2>&1; then
     echo "健康检查失败，发送告警..."
     # 这里可以添加告警逻辑
 fi

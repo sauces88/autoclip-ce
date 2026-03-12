@@ -109,7 +109,7 @@ check_services() {
     log_header "服务健康检查"
     
     # 检查后端API
-    if curl -fsS "http://localhost:8000/api/v1/health/" >/dev/null 2>&1; then
+    if curl -fsS "http://localhost:8001/api/v1/health/" >/dev/null 2>&1; then
         log_success "后端API服务健康"
     else
         log_error "后端API服务不健康"
@@ -178,8 +178,8 @@ show_access_info() {
     
     echo -e "${CYAN}🌐 服务访问地址:${NC}"
     echo -e "  前端界面: http://localhost:3000"
-    echo -e "  后端API:  http://localhost:8000"
-    echo -e "  API文档:  http://localhost:8000/docs"
+    echo -e "  后端API:  http://localhost:8001"
+    echo -e "  API文档:  http://localhost:8001/docs"
     echo -e "  Flower监控: http://localhost:5555"
     
     echo -e "\n${CYAN}📝 常用命令:${NC}"

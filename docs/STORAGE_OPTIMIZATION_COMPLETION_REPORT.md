@@ -183,7 +183,7 @@ python scripts/checklist_storage_optimization.py
 ### 3. 监控存储使用
 ```bash
 # 获取项目存储信息
-curl -X GET "http://localhost:8000/api/v1/files/projects/{project_id}/storage-info"
+curl -X GET "http://localhost:8001/api/v1/files/projects/{project_id}/storage-info"
 ```
 
 ## 📊 质量保证

@@ -281,7 +281,7 @@ GET /api/v1/speech-recognition/status
 
 1. **检查服务状态**
    ```bash
-   curl http://localhost:8000/api/v1/speech-recognition/status
+   curl http://localhost:8001/api/v1/speech-recognition/status
    ```
 
 2. **查看后端日志**

@@ -393,8 +393,8 @@ autoclip/
 
 启动系统后访问以下地址查看API文档：
 
-- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs) (本地开发环境)
-- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc) (本地开发环境)
+- **Swagger UI**: [http://localhost:8001/docs](http://localhost:8001/docs) (本地开发环境)
+- **ReDoc**: [http://localhost:8001/redoc](http://localhost:8001/redoc) (本地开发环境)
 
 ### 主要API端点
 
@@ -417,7 +417,7 @@ autoclip/
 
 ```bash
 # 检查端口占用
-lsof -i :8000  # 后端端口
+lsof -i :8001  # 后端端口
 lsof -i :3000  # 前端端口
 
 # 停止占用进程
@@ -467,7 +467,7 @@ tail -f logs/celery.log     # 任务队列日志
 ./status_autoclip.sh
 
 # 手动检查服务
-curl http://localhost:8000/api/v1/health/  # 后端健康检查
+curl http://localhost:8001/api/v1/health/  # 后端健康检查
 curl http://localhost:3000/                # 前端访问测试
 redis-cli ping                             # Redis连接测试
 ```
@@ -484,7 +484,7 @@ source venv/bin/activate
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
 # 启动后端开发服务器
-python -m uvicorn backend.main:app --reload --port 8000
+python -m uvicorn backend.main:app --reload --port 8001
 ```
 
 ### 前端开发
@@ -573,8 +573,8 @@ docker-compose ps
 #### 访问服务
 
 - **前端界面**: [http://localhost:3000](http://localhost:3000) (本地开发环境)
-- **后端API**: [http://localhost:8000](http://localhost:8000) (本地开发环境)
-- **API文档**: [http://localhost:8000/docs](http://localhost:8000/docs) (本地开发环境)
+- **后端API**: [http://localhost:8001](http://localhost:8001) (本地开发环境)
+- **API文档**: [http://localhost:8001/docs](http://localhost:8001/docs) (本地开发环境)
 - **Flower监控**: [http://localhost:5555](http://localhost:5555) (本地开发环境)
 
 #### 开发环境
@@ -712,7 +712,7 @@ A: 使用以下命令检查并停止占用端口的进程：
 
 ```bash
 # 检查端口占用
-lsof -i :8000  # 后端端口
+lsof -i :8001  # 后端端口
 lsof -i :3000  # 前端端口
 
 # 停止进程

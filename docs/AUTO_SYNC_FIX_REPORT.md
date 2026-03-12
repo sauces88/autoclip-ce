@@ -134,10 +134,10 @@ def get_project_dir(project_id: str) -> Path:
 
 ```bash
 # 测试单个项目同步
-curl -X POST "http://localhost:8000/api/v1/projects/474a7383-5784-4d8c-a43c-fe10e97c9a8b/sync-data"
+curl -X POST "http://localhost:8001/api/v1/projects/474a7383-5784-4d8c-a43c-fe10e97c9a8b/sync-data"
 
 # 测试批量同步
-curl -X POST "http://localhost:8000/api/v1/projects/sync-all-data"
+curl -X POST "http://localhost:8001/api/v1/projects/sync-all-data"
 ```
 
 ### 2. 代码验证

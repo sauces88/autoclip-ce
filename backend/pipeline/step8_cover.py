@@ -26,8 +26,19 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
 import requests
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
+
+# 中文字体路径（粗体优先）
+_FONT_CANDIDATES = [
+    "C:/Windows/Fonts/msyhbd.ttc",   # 微软雅黑粗体 (Windows)
+    "C:/Windows/Fonts/simhei.ttf",   # 黑体 (Windows)
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",  # Linux
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/System/Library/Fonts/PingFang.ttc",  # macOS
+]
 
 # 火山引擎 Seedream API
 SEEDREAM_API_URL = os.getenv("VOLCENGINE_SEEDREAM_API_URL", "https://ark.cn-beijing.volces.com/api/v3/images/generations")
@@ -132,52 +143,205 @@ def _extract_mid_frame(video_path: Path, sec: float, out_path: Path) -> bool:
 
 def _build_cover_prompt(title: str, content_summary: str = "") -> str:
     """
-    构造封面生成 prompt：以原始截图为背景，叠加渐变遮罩和文字排版。
-    风格参考 xhs-cover-skill 的 text_overlay_only 模式。
+    构造封面生成 prompt：只做背景美化，不加任何文字。
+    文字由 PIL 后续精确叠加。
     """
-    # 将标题按标点断行（优先在中间附近的标点处拆分）
-    title_display = title
-    if len(title) > 8:
-        best_pos = -1
-        best_dist = len(title)
-        mid = len(title) // 2
-        for sep in ("！", "？", "，", "：", "、", ".", "!", "?", ","):
-            idx = title.find(sep)
-            while idx != -1:
-                if 4 <= idx + 1 <= len(title) - 2:
-                    dist = abs(idx + 1 - mid)
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_pos = idx + 1
-                idx = title.find(sep, idx + 1)
-        if best_pos > 0:
-            title_display = title[:best_pos] + " " + title[best_pos:]
-        else:
-            title_display = title[:mid] + " " + title[mid:]
-
-    subtitle_part = ""
-    if content_summary:
-        subtitle = content_summary[:60].rstrip("，。、！？")
-        subtitle_part = (
-            f"Below the gold divider, show one line of smaller white text: '{subtitle}'. "
-            f"Only render this subtitle once, do not duplicate any text. "
-        )
-
     return (
-        f"Use the original photo as full background, keep it completely intact. "
-        f"Apply a smooth cinematic gradient overlay on the lower half only: "
-        f"from fully transparent in the middle to deep black at the very bottom. "
-        f"In the lower-left area, place the Chinese title '{title_display}' "
-        f"in large bold white sans-serif font, left-aligned, with soft shadow behind text. "
-        f"The last key phrase of the title must be rendered in bright warm gold color "
-        f"(not white), making it visually pop as the emphasis. "
-        f"Below the title, add one short thin gold horizontal line as divider. "
-        f"{subtitle_part}"
-        f"At the very bottom edge, add a thin decorative gradient bar from red through gold to red. "
-        f"Style: clean editorial Xiaohongshu cover. "
-        f"Important: do not duplicate any text, do not add illustrations or cartoon elements, "
-        f"do not replace or modify the background photo, do not add any watermark or logo."
+        "Use the original photo as full background, keep it completely intact. "
+        "Apply a smooth cinematic gradient overlay on the lower 40% of the image: "
+        "from fully transparent in the middle to deep rich black at the very bottom. "
+        "At the very bottom edge, add a thin decorative gradient bar from red through gold to red. "
+        "Style: clean cinematic look, moody atmosphere. "
+        "Important: do NOT add any text, titles, watermarks, logos, or written characters of any kind. "
+        "Do NOT add illustrations or cartoon elements. "
+        "Do NOT replace or modify the background photo content. "
+        "Only apply the gradient overlay and bottom decorative bar."
     )
+
+
+def _get_font(size: int) -> ImageFont.FreeTypeFont:
+    """获取中文字体，按候选列表依次尝试"""
+    for path in _FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    logger.warning("未找到中文字体，使用默认字体")
+    return ImageFont.load_default()
+
+
+def _wrap_text_by_pixels(
+    text: str, font: ImageFont.FreeTypeFont, max_width: int, draw: ImageDraw.Draw
+) -> list:
+    """
+    按实际像素宽度自动换行。优先在标点处断行，否则按像素宽度强制断。
+    """
+    separators = set("，。！？、：；,!?:;")
+    lines = []
+    remaining = text.strip()
+
+    while remaining:
+        # 如果整行能放下，直接加入
+        bbox = draw.textbbox((0, 0), remaining, font=font)
+        if (bbox[2] - bbox[0]) <= max_width:
+            lines.append(remaining)
+            break
+
+        # 逐字符找断点
+        best_break = 0
+        last_sep_break = 0
+        for i in range(1, len(remaining) + 1):
+            chunk = remaining[:i]
+            bbox = draw.textbbox((0, 0), chunk, font=font)
+            chunk_w = bbox[2] - bbox[0]
+            if chunk_w <= max_width:
+                best_break = i
+                if i < len(remaining) and remaining[i - 1] in separators:
+                    last_sep_break = i
+            else:
+                break
+
+        # 优先在标点处断行
+        if last_sep_break >= 3:
+            cut = last_sep_break
+        elif best_break >= 1:
+            cut = best_break
+        else:
+            cut = 1  # 至少放一个字
+
+        lines.append(remaining[:cut])
+        remaining = remaining[cut:]
+
+    return lines
+
+
+def _overlay_text_on_cover(
+    image_bytes: bytes,
+    title: str,
+    content_summary: str = "",
+) -> bytes:
+    """
+    用 PIL 在 Seedream 生成的背景图上叠加精确中文文字。
+    基于像素宽度自动换行，文字超出时自动缩小字号。
+
+    布局（从底部向上）：
+      - 底部装饰条（由 Seedream 生成）
+      - 副标题（小字白色）
+      - 金色分割线
+      - 标题（大字白色，末尾关键词金色）
+    """
+    img = Image.open(BytesIO(image_bytes)).convert("RGBA")
+    w, h = img.size
+
+    # 颜色
+    white = (255, 255, 255, 255)
+    gold = (255, 200, 50, 255)
+    shadow_color = (0, 0, 0, 180)
+    subtitle_color = (200, 200, 200, 230)
+
+    # 边距
+    margin_x = int(w * 0.06)
+    margin_bottom = int(h * 0.05)
+    max_text_width = w - margin_x * 2  # 文字可用最大宽度
+    min_top_y = int(h * 0.35)  # 文字不能超过图片 35% 以上（保护人脸区域）
+
+    # ─── 自适应字号：如果文字太多放不下，自动缩小 ───
+    title_font_size = max(36, int(h * 0.042))
+    sub_font_size = max(20, int(h * 0.024))
+
+    for _attempt in range(5):
+        title_font = _get_font(title_font_size)
+        sub_font = _get_font(sub_font_size)
+
+        # 创建临时 draw 用于测量
+        tmp_img = Image.new("RGBA", (w, h))
+        tmp_draw = ImageDraw.Draw(tmp_img)
+
+        # 预测总高度
+        title_lines = _wrap_text_by_pixels(title, title_font, max_text_width, tmp_draw)
+        line_spacing = int(title_font_size * 0.35)
+        total_height = margin_bottom
+
+        # 副标题高度
+        if content_summary:
+            subtitle = content_summary[:50].rstrip("，。、！？")
+            sb = tmp_draw.textbbox((0, 0), subtitle, font=sub_font)
+            total_height += (sb[3] - sb[1]) + int(sub_font_size * 0.5)
+
+        # 分割线高度
+        total_height += int(h * 0.025)
+
+        # 标题高度
+        for line in title_lines:
+            bb = tmp_draw.textbbox((0, 0), line, font=title_font)
+            total_height += (bb[3] - bb[1]) + line_spacing
+
+        # 检查是否溢出
+        if h - total_height >= min_top_y:
+            break  # 不溢出，可以用当前字号
+
+        # 缩小字号重试
+        title_font_size = max(24, int(title_font_size * 0.85))
+        sub_font_size = max(16, int(sub_font_size * 0.85))
+
+    # ─── 正式绘制 ───
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    title_lines = _wrap_text_by_pixels(title, title_font, max_text_width, draw)
+    cursor_y = h - margin_bottom
+
+    # 1. 副标题
+    if content_summary:
+        subtitle = content_summary[:50].rstrip("，。、！？")
+        sub_lines = _wrap_text_by_pixels(subtitle, sub_font, max_text_width, draw)
+        for sl in reversed(sub_lines):
+            sb = draw.textbbox((0, 0), sl, font=sub_font)
+            sl_h = sb[3] - sb[1]
+            cursor_y -= sl_h
+            draw.text((margin_x + 2, cursor_y + 2), sl, font=sub_font, fill=shadow_color)
+            draw.text((margin_x, cursor_y), sl, font=sub_font, fill=subtitle_color)
+            cursor_y -= int(sub_font_size * 0.3)
+
+    # 2. 金色分割线
+    cursor_y -= int(h * 0.008)
+    line_len = int(w * 0.22)
+    draw.line(
+        [(margin_x, cursor_y), (margin_x + line_len, cursor_y)],
+        fill=gold, width=max(2, int(h * 0.0025))
+    )
+    cursor_y -= int(h * 0.02)
+
+    # 3. 标题（多行，从下往上绘制）
+    line_spacing = int(title_font_size * 0.35)
+
+    for i in range(len(title_lines) - 1, -1, -1):
+        line = title_lines[i]
+        bb = draw.textbbox((0, 0), line, font=title_font)
+        lh = bb[3] - bb[1]
+        cursor_y -= lh
+
+        # 溢出保护：不画到 min_top_y 以上
+        if cursor_y < min_top_y:
+            break
+
+        is_last_line = (i == len(title_lines) - 1)
+        fill_color = gold if (is_last_line and len(title_lines) > 1) else white
+
+        # 阴影
+        draw.text((margin_x + 2, cursor_y + 2), line, font=title_font, fill=shadow_color)
+        draw.text((margin_x, cursor_y), line, font=title_font, fill=fill_color)
+
+        cursor_y -= line_spacing
+
+    # 合成
+    img = Image.alpha_composite(img, overlay)
+    img = img.convert("RGB")
+
+    buf = BytesIO()
+    img.save(buf, format="PNG", quality=95)
+    return buf.getvalue()
 
 
 def _generate_cover_with_seedream(
@@ -437,12 +601,13 @@ class CoverGenerator:
                     size=size,
                 )
 
-                # 5. 下载并保存封面图
-                image_bytes = _download_image(image_url)
+                # 5. 下载并用 PIL 叠加精确文字
+                raw_bytes = _download_image(image_url)
+                final_bytes = _overlay_text_on_cover(raw_bytes, str(title), content_summary)
                 cover_output = self.output_dir / f"{safe_name}_cover.png"
                 cover_output.parent.mkdir(parents=True, exist_ok=True)
-                cover_output.write_bytes(image_bytes)
-                logger.info(f"封面已保存: {cover_output.name} ({len(image_bytes)} bytes)")
+                cover_output.write_bytes(final_bytes)
+                logger.info(f"封面已保存(含PIL文字): {cover_output.name} ({len(final_bytes)} bytes)")
 
             clip["cover_path"] = str(cover_output)
             results["covers"].append(str(cover_output))

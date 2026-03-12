@@ -509,7 +509,7 @@ class ApiService {
 
   constructor() {
     this.api = axios.create({
-      baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1',
+      baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8001/api/v1',
       timeout: 300000, // 5分钟超时
       headers: {
         'Content-Type': 'application/json',
@@ -811,7 +811,7 @@ cd ..
 # 启动后端服务
 echo "🔧 启动后端服务..."
 cd backend
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001 &
 BACKEND_PID=$!
 cd ..
 
@@ -824,8 +824,8 @@ cd ..
 
 echo "✅ 开发环境启动完成！"
 echo "📱 前端地址: http://localhost:3000"
-echo "🔌 后端API: http://localhost:8000"
-echo "📚 API文档: http://localhost:8000/docs"
+echo "🔌 后端API: http://localhost:8001"
+echo "📚 API文档: http://localhost:8001/docs"
 
 # 等待用户中断
 trap 'echo "\n🛑 正在停止服务..."; kill $BACKEND_PID $FRONTEND_PID; exit' INT

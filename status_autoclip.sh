@@ -11,7 +11,7 @@ set -euo pipefail
 # =============================================================================
 
 # 服务端口配置
-BACKEND_PORT=8000
+BACKEND_PORT=8001
 FRONTEND_PORT=3000
 REDIS_PORT=6379
 

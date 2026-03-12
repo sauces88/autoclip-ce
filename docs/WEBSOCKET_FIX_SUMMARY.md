@@ -125,7 +125,7 @@ userId: `homepage-user`
 ```bash
 ✅ WebSocket网关服务已启动
 ✅ 进度快照服务已连接Redis
-✅ API服务正常启动 (http://localhost:8000/docs)
+✅ API服务正常启动 (http://localhost:8001/docs)
 ```
 
 ### 3. 功能测试

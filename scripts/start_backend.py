@@ -25,8 +25,8 @@ def main():
     print(f"项目根目录: {project_root}")
     print(f"后端目录: {backend_dir}")
     print(f"当前工作目录: {os.getcwd()}")
-    print("服务地址: http://localhost:8000")
-    print("API文档: http://localhost:8000/docs")
+    print("服务地址: http://localhost:8001")
+    print("API文档: http://localhost:8001/docs")
     print("按 Ctrl+C 停止服务")
     
     # 启动服务

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Card, Button, Tooltip, Modal, message } from 'antd'
+import { Card, Button, Tooltip, Modal, Input, message } from 'antd'
 import { PlayCircleOutlined, FolderOpenOutlined, ClockCircleOutlined, StarFilled, EditOutlined, EyeOutlined, ReloadOutlined, LoadingOutlined } from '@ant-design/icons'
 import ReactPlayer from 'react-player'
 import { Clip } from '../store/useProjectStore'
@@ -30,6 +30,15 @@ const ClipCard: React.FC<ClipCardProps> = ({
   const [showCoverModal, setShowCoverModal] = useState(false)
   const [coverUrl, setCoverUrl] = useState<string | null>(null)
   const [regeneratingCover, setRegeneratingCover] = useState(false)
+  const [coverTitle, setCoverTitle] = useState(clip.generated_title || clip.title || '')
+  const [coverSubtitle, setCoverSubtitle] = useState(() => {
+    // 与 pipeline step8_cover.py 保持一致：优先用 content 数组拼接，其次用 outline
+    if (clip.content && clip.content.length > 0) {
+      const joined = clip.content.slice(0, 5).join('；')
+      return joined.length > 200 ? joined.slice(0, 200) + '...' : joined
+    }
+    return clip.outline || ''
+  })
   const [burnStatus, setBurnStatus] = useState<string>(clip.burn_status || 'none')
   const playerRef = useRef<ReactPlayer>(null)
 
@@ -589,7 +598,11 @@ const ClipCard: React.FC<ClipCardProps> = ({
               if (!projectId) return
               setRegeneratingCover(true)
               try {
-                const resp = await fetch(`/api/v1/projects/${projectId}/clips/${clip.id}/regenerate-cover`, { method: 'POST' })
+                const resp = await fetch(`/api/v1/projects/${projectId}/clips/${clip.id}/regenerate-cover`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ cover_title: coverTitle, cover_subtitle: coverSubtitle }),
+                })
                 const data = await resp.json()
                 if (data.success) {
                   message.success('封面已重新生成')
@@ -617,10 +630,33 @@ const ClipCard: React.FC<ClipCardProps> = ({
             key={coverUrl}
             src={coverUrl}
             alt="封面"
-            style={{ width: '100%', borderRadius: '8px' }}
+            style={{ width: '100%', borderRadius: '8px', marginBottom: '12px' }}
             onError={() => message.error('封面图片加载失败，可能尚未生成')}
           />
         )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>封面标题（大字）</div>
+            <Input.TextArea
+              value={coverTitle}
+              onChange={e => setCoverTitle(e.target.value)}
+              autoSize={{ minRows: 1, maxRows: 3 }}
+              maxLength={60}
+              showCount
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>封面副标题（小字，留空不显示）</div>
+            <Input.TextArea
+              value={coverSubtitle}
+              onChange={e => setCoverSubtitle(e.target.value)}
+              placeholder="留空则不显示副标题"
+              autoSize={{ minRows: 1, maxRows: 3 }}
+              maxLength={80}
+              showCount
+            />
+          </div>
+        </div>
       </Modal>
     </>
   )

@@ -36,7 +36,7 @@ cd /app
 
 # 启动后端服务
 echo "🔧 启动后端服务..."
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload &
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8001 --reload &
 BACKEND_PID=$!
 
 # 等待后端启动
@@ -52,7 +52,7 @@ FRONTEND_PID=$!
 cd /app
 
 echo "✅ 服务启动完成"
-echo "  后端API: http://localhost:8000"
+echo "  后端API: http://localhost:8001"
 echo "  前端界面: http://localhost:3000"
 
 # 等待所有进程

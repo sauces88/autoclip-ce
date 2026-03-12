@@ -112,11 +112,11 @@ python scripts/fix_collection_clip_ids.py --project-id <项目ID> --test-only
 ### ✅ API测试
 ```bash
 # 切片API
-curl "http://localhost:8000/api/v1/clips/?project_id=5c48803d-0aa7-48d7-a270-2b33e4954f25"
+curl "http://localhost:8001/api/v1/clips/?project_id=5c48803d-0aa7-48d7-a270-2b33e4954f25"
 # 返回: 6个切片 ✅
 
 # 合集API
-curl "http://localhost:8000/api/v1/collections/?project_id=5c48803d-0aa7-48d7-a270-2b33e4954f25"
+curl "http://localhost:8001/api/v1/collections/?project_id=5c48803d-0aa7-48d7-a270-2b33e4954f25"
 # 返回: 1个合集，包含3个clip_ids ✅
 ```
 

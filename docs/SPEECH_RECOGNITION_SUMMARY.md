@@ -241,7 +241,7 @@ except SpeechRecognitionError as e:
 ### 文档参考
 - [语音识别重新设计文档](docs/SPEECH_RECOGNITION_REDESIGN.md)
 - [语音识别设置指南](docs/SPEECH_RECOGNITION_SETUP.md)
-- [API文档](http://localhost:8000/docs)
+- [API文档](http://localhost:8001/docs)
 
 ## ✅ 总结
 

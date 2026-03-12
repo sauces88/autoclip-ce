@@ -47,7 +47,7 @@ brew services start redis  # macOS
 # 或 sudo systemctl start redis-server  # Linux
 
 # 启动后端
-python -m uvicorn backend.main:app --reload --port 8000
+python -m uvicorn backend.main:app --reload --port 8001
 
 # 启动Celery Worker
 celery -A backend.core.celery_app worker --loglevel=info

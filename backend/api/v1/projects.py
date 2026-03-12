@@ -6,6 +6,7 @@ import logging
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from backend.core.database import get_db
 from backend.services.project_service import ProjectService
@@ -1035,10 +1036,15 @@ def get_clip_cover(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RegenerateCoverRequest(BaseModel):
+    cover_title: Optional[str] = None
+    cover_subtitle: Optional[str] = None
+
 @router.post("/{project_id}/clips/{clip_id}/regenerate-cover")
 def regenerate_clip_cover(
     project_id: str,
     clip_id: str,
+    body: Optional[RegenerateCoverRequest] = None,
     project_service: ProjectService = Depends(get_project_service)
 ):
     """重新生成单个切片的封面"""
@@ -1097,10 +1103,25 @@ def regenerate_clip_cover(
                 size=size,
             )
 
-            image_bytes = _download_image(image_url)
+            raw_bytes = _download_image(image_url)
+            # PIL 叠加精确中文标题（优先用前端传入的标题和副标题）
+            from ...pipeline.step8_cover import _overlay_text_on_cover
+            cover_title = (body.cover_title if body and body.cover_title else title)
+            # 副标题 fallback：与 pipeline step8_cover 保持一致，从 clip_metadata.content 取
+            if body and body.cover_subtitle is not None:
+                cover_subtitle = body.cover_subtitle
+            else:
+                meta = clip.clip_metadata or {}
+                cs = meta.get("content", "") or meta.get("outline", "") or ""
+                if isinstance(cs, list):
+                    cs = "；".join(str(x) for x in cs[:5])
+                if len(cs) > 200:
+                    cs = cs[:200] + "..."
+                cover_subtitle = cs
+            final_bytes = _overlay_text_on_cover(raw_bytes, cover_title, cover_subtitle)
             cover_output = clips_with_subs / f"{safe_name}_cover.png"
             cover_output.parent.mkdir(parents=True, exist_ok=True)
-            cover_output.write_bytes(image_bytes)
+            cover_output.write_bytes(final_bytes)
 
         # 更新 step8_cover.json
         step8_json_path = metadata_dir / "step8_cover.json"

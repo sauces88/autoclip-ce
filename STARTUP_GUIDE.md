@@ -97,9 +97,9 @@ DEBUG=true
 | 服务 | 端口 | 描述 |
 |------|------|------|
 | 前端界面 | 3000 | React 开发服务器 |
-| 后端API | 8000 | FastAPI 服务器 |
+| 后端API | 8001 | FastAPI 服务器 |
 | Redis | 6379 | 消息代理 |
-| API文档 | 8000/docs | Swagger UI |
+| API文档 | 8001/docs | Swagger UI |
 
 ## 📁 目录结构
 
@@ -129,7 +129,7 @@ autoclip/
 1. **端口被占用**
    ```bash
    # 检查端口占用
-   lsof -i :8000
+   lsof -i :8001
    lsof -i :3000
    
    # 停止占用进程
@@ -179,7 +179,7 @@ tail -f logs/celery.log
 ./status_autoclip.sh
 
 # 手动检查服务
-curl http://localhost:8000/api/v1/health/
+curl http://localhost:8001/api/v1/health/
 curl http://localhost:3000/
 redis-cli ping
 ```
@@ -196,7 +196,7 @@ source venv/bin/activate
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
 # 启动后端（开发模式）
-python -m uvicorn backend.main:app --reload --port 8000
+python -m uvicorn backend.main:app --reload --port 8001
 ```
 
 ### 前端开发

@@ -89,7 +89,7 @@ class DataSyncService:
 
 测试API返回结果：
 ```bash
-curl "http://localhost:8000/api/v1/clips/?project_id=1fdb0bf1-7f3c-44f7-a69d-90c5a1d26fbe"
+curl "http://localhost:8001/api/v1/clips/?project_id=1fdb0bf1-7f3c-44f7-a69d-90c5a1d26fbe"
 ```
 
 返回了正确的5个切片数据，包含完整的元数据信息。

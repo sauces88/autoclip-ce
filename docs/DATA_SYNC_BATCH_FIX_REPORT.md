@@ -36,7 +36,7 @@ result = sync_service.sync_project_from_filesystem(project_id, project_dir)
 使用新添加的API端点进行批量数据同步：
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/projects/sync-all-data"
+curl -X POST "http://localhost:8001/api/v1/projects/sync-all-data"
 ```
 
 **同步结果**:

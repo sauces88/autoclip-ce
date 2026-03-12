@@ -84,13 +84,13 @@ collection.clip_ids = uuid_clip_ids
 
 **切片API**：
 ```bash
-curl "http://localhost:8000/api/v1/clips/?project_id=474a7383-5784-4d8c-a43c-fe10e97c9a8b"
+curl "http://localhost:8001/api/v1/clips/?project_id=474a7383-5784-4d8c-a43c-fe10e97c9a8b"
 # 返回: 8个切片
 ```
 
 **合集API**：
 ```bash
-curl "http://localhost:8000/api/v1/collections/?project_id=474a7383-5784-4d8c-a43c-fe10e97c9a8b"
+curl "http://localhost:8001/api/v1/collections/?project_id=474a7383-5784-4d8c-a43c-fe10e97c9a8b"
 # 返回: 3个合集，每个合集都有正确的clip_ids
 ```
 

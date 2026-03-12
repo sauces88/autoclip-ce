@@ -185,7 +185,7 @@ server {
     add_header X-XSS-Protection "1; mode=block";
     
     location / {
-        proxy_pass http://localhost:8000;
+        proxy_pass http://localhost:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }

@@ -151,7 +151,7 @@ if __name__ == "__main__":
     import sys
     
     # 默认端口
-    port = 8000
+    port = 8001
     
     # 检查命令行参数
     if len(sys.argv) > 1:
@@ -161,7 +161,7 @@ if __name__ == "__main__":
                     port = int(sys.argv[i + 1])
                 except ValueError:
                     logger.error(f"无效的端口号: {sys.argv[i + 1]}")
-                    port = 8000
+                    port = 8001
     
     logger.info(f"启动服务器，端口: {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

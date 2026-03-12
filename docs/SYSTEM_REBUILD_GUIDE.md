@@ -52,7 +52,7 @@
    ```
 
 3. **检查服务状态**
-   - 后端API: http://localhost:8000/health
+   - 后端API: http://localhost:8001/health
    - 前端页面: http://localhost:3000
 
 ### **第三步：创建测试项目**

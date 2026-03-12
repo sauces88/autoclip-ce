@@ -78,7 +78,7 @@ sudo systemctl start redis
 ### 1. 启动后端服务
 ```bash
 cd backend
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### 2. 启动前端服务
@@ -89,8 +89,8 @@ npm run dev
 
 ### 3. 访问应用
 - 前端: http://localhost:3000
-- 后端API: http://localhost:8000
-- API文档: http://localhost:8000/docs
+- 后端API: http://localhost:8001
+- API文档: http://localhost:8001/docs
 
 ## 📚 开发指南
 
@@ -274,7 +274,7 @@ alembic history
 docker build -t autoclip .
 
 # 运行Docker容器
-docker run -p 8000:8000 autoclip
+docker run -p 8001:8001 autoclip
 ```
 
 ## 🐛 常见问题
