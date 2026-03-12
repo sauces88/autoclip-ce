@@ -22,7 +22,6 @@ class SettingsRequest(BaseModel):
     model_name: Optional[str] = None
     chunk_size: Optional[int] = None
     min_score_threshold: Optional[float] = None
-    max_clips_per_collection: Optional[int] = None
 
 class ApiKeyTestRequest(BaseModel):
     """API密钥测试请求"""
@@ -52,7 +51,6 @@ def load_settings() -> Dict[str, Any]:
         "model_name": "qwen-plus",
         "chunk_size": 5000,
         "min_score_threshold": 0.7,
-        "max_clips_per_collection": 5
     }
     
     if settings_file.exists():
@@ -119,9 +117,6 @@ async def update_settings(request: SettingsRequest):
         
         if request.min_score_threshold is not None:
             settings["min_score_threshold"] = request.min_score_threshold
-        
-        if request.max_clips_per_collection is not None:
-            settings["max_clips_per_collection"] = request.max_clips_per_collection
         
         # 保存设置
         save_settings(settings)

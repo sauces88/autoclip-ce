@@ -17,7 +17,6 @@ from ..core.config import init_paths, get_data_directory
 from ..models.base import Base
 from ..models.project import Project, ProjectStatus, ProjectType
 from ..models.clip import Clip
-from ..models.collection import Collection
 from ..models.task import Task, TaskStatus, TaskType
 from sqlalchemy.orm import Session
 from ..core.database import SessionLocal
@@ -40,8 +39,7 @@ def create_initial_data():
             status=ProjectStatus.PENDING,
             processing_config={
                 "chunk_size": 5000,
-                "min_score_threshold": 0.7,
-                "max_clips_per_collection": 5
+                "min_score_threshold": 0.7
             }
         )
         db.add(test_project)
@@ -71,15 +69,7 @@ def create_initial_data():
             project_id=test_project.id
         )
         db.add(test_clip)
-        
-        # 创建测试合集
-        test_collection = Collection(
-            title="测试合集",
-            description="这是一个测试合集",
-            project_id=test_project.id
-        )
-        db.add(test_collection)
-        
+
         db.commit()
         print("✅ 初始测试数据创建成功")
         

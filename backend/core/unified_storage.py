@@ -48,7 +48,6 @@ class UnifiedStorageManager:
             self.data_dir,
             self.output_dir,
             self.output_dir / "clips",
-            self.output_dir / "collections",
             self.output_dir / "metadata",
             self.data_dir / "projects",
             self.data_dir / "uploads",
@@ -84,12 +83,6 @@ class UnifiedStorageManager:
         clips_dir.mkdir(parents=True, exist_ok=True)
         return clips_dir
     
-    def get_project_collections_directory(self, project_id: str) -> Path:
-        """获取项目合集目录"""
-        collections_dir = self.get_project_output_directory(project_id) / "collections"
-        collections_dir.mkdir(parents=True, exist_ok=True)
-        return collections_dir
-    
     def get_project_metadata_directory(self, project_id: str) -> Path:
         """获取项目元数据目录"""
         metadata_dir = self.get_project_directory(project_id) / "metadata"
@@ -110,12 +103,6 @@ class UnifiedStorageManager:
         # 清理文件名，移除特殊字符
         safe_title = self._sanitize_filename(title)
         return self.get_project_clips_directory(project_id) / f"{clip_id}_{safe_title}.mp4"
-    
-    def get_collection_file_path(self, project_id: str, collection_id: str, title: str) -> Path:
-        """获取合集文件路径"""
-        # 清理文件名，移除特殊字符
-        safe_title = self._sanitize_filename(title)
-        return self.get_project_collections_directory(project_id) / f"{collection_id}_{safe_title}.mp4"
     
     def get_metadata_file_path(self, project_id: str, filename: str) -> Path:
         """获取项目元数据文件路径"""
@@ -187,7 +174,7 @@ class UnifiedStorageManager:
         Args:
             file_path: 原始文件路径
             project_id: 项目ID
-            file_type: 文件类型 ("clip", "collection", "raw")
+            file_type: 文件类型 ("clip", "raw")
             
         Returns:
             修复后的文件路径，如果文件不存在则返回None
@@ -210,23 +197,6 @@ class UnifiedStorageManager:
                     standard_path = self.get_clip_file_path(project_id, clip_id, title)
                     if standard_path.exists():
                         return standard_path
-        
-        elif file_type == "collection":
-            # 从文件名中提取collection_id和title
-            filename = original_path.name
-            if '_' in filename:
-                parts = filename.split('_', 1)
-                if len(parts) == 2:
-                    collection_id = parts[0]
-                    title = parts[1].replace('.mp4', '')
-                    standard_path = self.get_collection_file_path(project_id, collection_id, title)
-                    if standard_path.exists():
-                        return standard_path
-            else:
-                # 尝试直接使用文件名作为title
-                title = filename.replace('.mp4', '')
-                # 这里需要collection_id，暂时返回None
-                return None
         
         elif file_type == "raw":
             # 原始文件通常在raw目录
@@ -267,7 +237,6 @@ class UnifiedStorageManager:
             "project_directory": str(project_dir),
             "raw_files": [],
             "clips": [],
-            "collections": [],
             "metadata_files": [],
             "total_size": 0
         }
@@ -288,17 +257,6 @@ class UnifiedStorageManager:
         for file_path in clips_dir.iterdir():
             if file_path.is_file() and file_path.suffix == '.mp4':
                 info["clips"].append({
-                    "name": file_path.name,
-                    "size": file_path.stat().st_size,
-                    "modified": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
-                })
-                info["total_size"] += file_path.stat().st_size
-        
-        # 扫描合集文件
-        collections_dir = self.get_project_collections_directory(project_id)
-        for file_path in collections_dir.iterdir():
-            if file_path.is_file() and file_path.suffix == '.mp4':
-                info["collections"].append({
                     "name": file_path.name,
                     "size": file_path.stat().st_size,
                     "modified": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()

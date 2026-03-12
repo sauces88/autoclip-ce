@@ -30,8 +30,7 @@ const ProcessingPage: React.FC = () => {
     { title: '时间定位', description: '基于SRT字幕定位话题时间区间' },
     { title: '内容评分', description: '多维度评估片段质量与传播潜力' },
     { title: '标题生成', description: '为高分片段生成吸引人的标题' },
-    { title: '主题聚类', description: '将相关片段聚合为合集推荐' },
-    { title: '视频切割', description: '使用FFmpeg生成切片与合集视频' }
+    { title: '视频切割', description: '使用FFmpeg生成切片视频' }
   ]
 
   useEffect(() => {

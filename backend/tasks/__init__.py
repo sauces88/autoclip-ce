@@ -18,7 +18,6 @@ __all__ = [
     
     # 视频任务
     'extract_video_clips',
-    'generate_video_collections',
     'optimize_video_quality',
     
     # 通知任务

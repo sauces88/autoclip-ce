@@ -247,7 +247,6 @@ class ProcessingService:
             "step2_timeline": ProcessingStep.STEP2_TIMELINE,
             "step3_scoring": ProcessingStep.STEP3_SCORING,
             "step4_title": ProcessingStep.STEP4_TITLE,
-            "step5_clustering": ProcessingStep.STEP5_CLUSTERING,
             "step6_video": ProcessingStep.STEP6_VIDEO
         }
         

@@ -23,7 +23,6 @@ class TaskType(str, Enum):
     """Task type enumeration."""
     VIDEO_PROCESSING = "video_processing"
     CLIP_GENERATION = "clip_generation"
-    COLLECTION_CREATION = "collection_creation"
     EXPORT = "export"
     CLEANUP = "cleanup"
 

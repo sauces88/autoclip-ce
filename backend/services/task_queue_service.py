@@ -13,7 +13,7 @@ from ..core.database import SessionLocal
 from ..models.task import Task, TaskStatus, TaskType
 from ..repositories.task_repository import TaskRepository
 from ..tasks.processing import process_video_pipeline, process_single_step, retry_processing_step
-from ..tasks.video import extract_video_clips, generate_video_collections, optimize_video_quality
+from ..tasks.video import extract_video_clips, optimize_video_quality
 from ..tasks.notification import send_processing_notification, send_error_notification, send_completion_notification
 from ..tasks.maintenance import cleanup_expired_tasks, health_check, backup_project_data
 
@@ -324,48 +324,3 @@ class TaskQueueService:
             logger.error(f"提交视频片段提取任务失败: {project_id}, 错误: {e}")
             raise
     
-    def submit_collection_generation_task(self, project_id: str, collection_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        提交合集生成任务
-        
-        Args:
-            project_id: 项目ID
-            collection_data: 合集数据
-            
-        Returns:
-            任务提交结果
-        """
-        logger.info(f"提交合集生成任务: {project_id}")
-        
-        try:
-            # 创建并保存任务记录
-            task = self.task_repo.create(
-                project_id=project_id,
-                name="视频合集生成",
-                description=f"生成项目 {project_id} 的视频合集",
-                task_type=TaskType.VIDEO_PROCESSING,
-                status=TaskStatus.PENDING,
-                priority=2
-            )
-            
-            # 提交Celery任务
-            celery_task = generate_video_collections.delay(project_id, collection_data)
-            
-            # 更新任务记录
-            task.celery_task_id = celery_task.id
-            self.db.commit()
-            
-            logger.info(f"合集生成任务已提交: {task.id}, Celery任务ID: {celery_task.id}")
-            
-            return {
-                'success': True,
-                'task_id': task.id,
-                'celery_task_id': celery_task.id,
-                'collection_count': len(collection_data),
-                'status': 'PENDING',
-                'message': f'视频合集生成任务已提交，共 {len(collection_data)} 个合集'
-            }
-            
-        except Exception as e:
-            logger.error(f"提交合集生成任务失败: {project_id}, 错误: {e}")
-            raise 

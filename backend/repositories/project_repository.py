@@ -191,7 +191,7 @@ class ProjectRepository(BaseRepository[Project]):
     
     def get_project_with_details(self, project_id: str) -> Optional[Project]:
         """
-        获取项目详情，包含关联的切片和合集
+        获取项目详情，包含关联的切片
         
         Args:
             project_id: 项目ID

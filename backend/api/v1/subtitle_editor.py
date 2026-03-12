@@ -433,10 +433,10 @@ async def edit_clip_by_subtitles(
     try:
         from ...utils.subtitle_processor import SubtitleProcessor
         from ...utils.video_editor import VideoEditor
-        from ...core.shared_config import CLIPS_DIR, COLLECTIONS_DIR
+        from ...core.shared_config import CLIPS_DIR
 
         subtitle_processor = SubtitleProcessor()
-        video_editor = VideoEditor(clips_dir=str(CLIPS_DIR), collections_dir=str(COLLECTIONS_DIR))
+        video_editor = VideoEditor(clips_dir=str(CLIPS_DIR))
         project_service = ProjectService(db)
 
         project = project_service.get(project_id)
@@ -560,10 +560,10 @@ async def create_edit_preview(
     try:
         from ...utils.subtitle_processor import SubtitleProcessor
         from ...utils.video_editor import VideoEditor
-        from ...core.shared_config import CLIPS_DIR, COLLECTIONS_DIR
+        from ...core.shared_config import CLIPS_DIR
 
         subtitle_processor = SubtitleProcessor()
-        video_editor = VideoEditor(clips_dir=str(CLIPS_DIR), collections_dir=str(COLLECTIONS_DIR))
+        video_editor = VideoEditor(clips_dir=str(CLIPS_DIR))
         project_service = ProjectService(db)
 
         project = project_service.get(project_id)

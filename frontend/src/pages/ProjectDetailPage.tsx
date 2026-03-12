@@ -96,35 +96,30 @@ const ProjectDetailPage: React.FC = () => {
     try {
       const project = await projectApi.getProject(id)
       
-      // 如果项目已完成，加载clips和collections
+      // 如果项目已完成，加载clips
       if (project.status === 'completed') {
         try {
-          const [clips, collections] = await Promise.all([
-            projectApi.getClips(id),
-            projectApi.getCollections(id)
-          ])
-          
+          const clips = await projectApi.getClips(id)
+
           console.log('🎬 Loaded clips in ProjectDetailPage:', clips)
-          console.log('📚 Loaded collections in ProjectDetailPage:', collections)
-          
+
           const projectWithData = {
             ...project,
-            clips: clips || [],
-            collections: collections || []
+            clips: clips || []
           }
-          
+
           console.log('🎯 Final project with data:', projectWithData)
           setCurrentProject(projectWithData)
-          
+
           // 同时更新projects数组，确保Store中的数据同步
           const { projects } = useProjectStore.getState()
-          const updatedProjects = projects.map(p => 
+          const updatedProjects = projects.map(p =>
             p.id === id ? projectWithData : p
           )
           useProjectStore.setState({ projects: updatedProjects })
         } catch (error) {
-          console.error('Failed to load clips/collections:', error)
-          // 即使clips/collections加载失败，也设置项目基本信息
+          console.error('Failed to load clips:', error)
+          // 即使clips加载失败，也设置项目基本信息
           setCurrentProject(project)
         }
       } else {

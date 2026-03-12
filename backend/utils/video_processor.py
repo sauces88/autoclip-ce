@@ -10,7 +10,7 @@ from pathlib import Path
 
 # 修复导入问题
 try:
-    from ..core.shared_config import CLIPS_DIR, COLLECTIONS_DIR
+    from ..core.shared_config import CLIPS_DIR
 except ImportError:
     # 如果相对导入失败，尝试绝对导入
     import sys
@@ -18,7 +18,7 @@ except ImportError:
     backend_path = Path(__file__).parent.parent
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
-    from ..core.shared_config import CLIPS_DIR, COLLECTIONS_DIR
+    from ..core.shared_config import CLIPS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +43,12 @@ class VideoProcessor:
         logger.info(f"NVENC GPU 加速: {'可用' if VideoProcessor._nvenc_available else '不可用，使用 CPU'}")
         return VideoProcessor._nvenc_available
 
-    def __init__(self, clips_dir: Optional[str] = None, collections_dir: Optional[str] = None):
+    def __init__(self, clips_dir: Optional[str] = None):
         # 强制使用传入的项目特定路径，不使用全局路径作为后备
         if not clips_dir:
             raise ValueError("clips_dir 参数是必需的，不能使用全局路径")
 
         self.clips_dir = Path(clips_dir)
-        self.collections_dir = Path(collections_dir) if collections_dir else None
     
     @staticmethod
     def sanitize_filename(filename: str) -> str:
@@ -204,91 +203,6 @@ class VideoProcessor:
             return False
     
     @staticmethod
-    def create_collection(clips_list: List[Path], output_path: Path) -> bool:
-        """
-        将多个视频片段拼接成合集
-        
-        Args:
-            clips_list: 视频片段路径列表
-            output_path: 输出合集路径
-            
-        Returns:
-            是否成功
-        """
-        try:
-            # 验证输入参数
-            if not clips_list:
-                logger.error("clips_list为空，无法创建合集")
-                return False
-            
-            # 验证所有视频文件是否存在
-            valid_clips = []
-            for clip_path in clips_list:
-                if not clip_path.exists():
-                    logger.warning(f"视频文件不存在，跳过: {clip_path}")
-                    continue
-                valid_clips.append(clip_path)
-            
-            if not valid_clips:
-                logger.error("没有有效的视频文件，无法创建合集")
-                return False
-            
-            # 确保输出目录存在
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # 创建concat文件
-            concat_file = output_path.parent / "concat_list.txt"
-            
-            with open(concat_file, 'w', encoding='utf-8') as f:
-                for clip_path in valid_clips:
-                    # 使用绝对路径并转义单引号
-                    abs_path = clip_path.absolute()
-                    escaped_path = str(abs_path).replace("'", "'\"'\"'")
-                    f.write(f"file '{escaped_path}'\n")
-            
-            # 验证concat文件内容
-            if concat_file.stat().st_size == 0:
-                logger.error("concat文件为空，无法创建合集")
-                concat_file.unlink(missing_ok=True)
-                return False
-            
-            # 构建FFmpeg命令 - 使用H.264编码确保兼容性
-            cmd = [
-                'ffmpeg',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', str(concat_file),
-                '-c:v', 'libx264',  # 使用H.264视频编码
-                '-preset', 'ultrafast',  # 使用最快的编码预设
-                '-crf', '28',  # 稍微降低质量以加快编码速度
-                '-c:a', 'aac',  # 使用AAC音频编码
-                '-b:a', '128k',  # 音频比特率
-                '-movflags', '+faststart',  # 优化网络播放
-                '-y',
-                str(output_path)
-            ]
-            
-            logger.info(f"执行FFmpeg命令: {' '.join(cmd)}")
-            
-            # 执行命令
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            
-            # 清理临时文件
-            concat_file.unlink(missing_ok=True)
-            
-            if result.returncode == 0:
-                logger.info(f"成功创建合集: {output_path}")
-                return True
-            else:
-                logger.error(f"创建合集失败: {result.stderr}")
-                logger.error(f"FFmpeg stdout: {result.stdout}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"视频拼接异常: {str(e)}")
-            return False
-    
-    @staticmethod
     def extract_thumbnail(video_path: Path, output_path: Path, time_offset: int = 5) -> bool:
         """
         从视频中提取缩略图
@@ -395,7 +309,7 @@ class VideoProcessor:
                 end_time = VideoProcessor.convert_seconds_to_ffmpeg_time(end_time)
             
             # 使用标题作为文件名，并清理不合法的字符
-            # 在文件名中包含clip_id，便于后续合集拼接时查找
+            # 在文件名中包含clip_id，便于后续查找
             safe_title = VideoProcessor.sanitize_filename(title)
             output_path = self.clips_dir / f"{clip_id}_{safe_title}.mp4"
             
@@ -408,48 +322,3 @@ class VideoProcessor:
                 logger.error(f"切片 {clip_id} 提取失败")
         
         return successful_clips
-    
-    def create_collections_from_metadata(self, collections_data: List[Dict]) -> List[Path]:
-        """
-        根据元数据创建合集
-        
-        Args:
-            collections_data: 合集数据列表
-            
-        Returns:
-            成功创建的合集路径列表
-        """
-        successful_collections = []
-        
-        for collection_data in collections_data:
-            collection_id = collection_data['id']
-            collection_title = collection_data.get('collection_title', f'合集_{collection_id}')
-            clip_ids = collection_data['clip_ids']
-            
-            # 构建片段路径列表
-            clips_list = []
-            for clip_id in clip_ids:
-                # 查找对应的切片文件
-                # 新的文件名格式是: {clip_id}_{title}.mp4
-                clip_path = self.clips_dir / f"{clip_id}_*.mp4"
-                found_clips = list(self.clips_dir.glob(f"{clip_id}_*.mp4"))
-                
-                if found_clips:
-                    found_clip = found_clips[0]  # 取第一个匹配的文件
-                    clips_list.append(found_clip)
-                    logger.info(f"找到合集 {collection_id} 的切片: {found_clip.name}")
-                else:
-                    logger.warning(f"未找到合集 {collection_id} 的切片 {clip_id}")
-            
-            if clips_list:
-                # 使用collection_title作为文件名，并清理不合法的字符
-                safe_title = VideoProcessor.sanitize_filename(collection_title)
-                output_path = self.collections_dir / f"{safe_title}.mp4"
-                
-                if VideoProcessor.create_collection(clips_list, output_path):
-                    successful_collections.append(output_path)
-                    logger.info(f"成功创建合集 {collection_id}: {output_path}")
-            else:
-                logger.warning(f"合集 {collection_id} 没有找到任何有效的切片文件")
-        
-        return successful_collections

@@ -108,24 +108,23 @@ def backend_process_video_pipeline(self, project_id: str, input_video_path: str,
     import time
     steps = [
         "大纲提取",
-        "时间定位", 
+        "时间定位",
         "内容评分",
         "标题生成",
-        "主题聚类",
         "视频切割"
     ]
-    
+
     for i, step in enumerate(steps):
-        progress = (i + 1) * 16  # 每步16%
-        print(f"📊 步骤 {i+1}/6: {step} - {progress}%")
-        
+        progress = (i + 1) * 20  # 每步20%
+        print(f"📊 步骤 {i+1}/5: {step} - {progress}%")
+
         # 更新任务状态
         try:
             self.update_state(
                 state='PROGRESS',
                 meta={
                     'current': i + 1,
-                    'total': 6,
+                    'total': 5,
                     'status': f'正在执行: {step}',
                     'progress': progress
                 }

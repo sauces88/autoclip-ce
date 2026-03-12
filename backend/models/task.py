@@ -20,7 +20,6 @@ class TaskType(str, enum.Enum):
     """任务类型枚举"""
     VIDEO_PROCESSING = "video_processing"    # 视频处理
     CLIP_GENERATION = "clip_generation"      # 切片生成
-    COLLECTION_CREATION = "collection_creation"  # 合集创建
     EXPORT = "export"                        # 导出
     CLEANUP = "cleanup"                      # 清理
 

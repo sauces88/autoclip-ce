@@ -60,8 +60,7 @@ class ClipResponse(BaseSchema):
     created_at: datetime = Field(description="Creation timestamp")
     updated_at: datetime = Field(description="Last update timestamp")
     
-    # Related data
-    collection_ids: Optional[List[str]] = Field(default_factory=list, description="Collection IDs this clip belongs to")
+
 
 
 class ClipListResponse(BaseSchema):

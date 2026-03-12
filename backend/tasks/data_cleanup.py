@@ -16,7 +16,6 @@ from ..core.database import SessionLocal
 from ..models.task import Task, TaskStatus
 from ..models.project import Project, ProjectStatus
 from ..models.clip import Clip
-from ..models.collection import Collection
 from ..repositories.task_repository import TaskRepository
 from ..repositories.project_repository import ProjectRepository
 
@@ -140,10 +139,7 @@ def _delete_project_data(db: SessionLocal, project_id: str):
     
     # 删除相关切片
     db.query(Clip).filter(Clip.project_id == project_id).delete()
-    
-    # 删除相关合集
-    db.query(Collection).filter(Collection.project_id == project_id).delete()
-    
+
     # 删除项目记录
     db.query(Project).filter(Project.id == project_id).delete()
     
@@ -316,18 +312,6 @@ def check_data_consistency(self) -> Dict[str, Any]:
                     "details": []
                 })
             
-            # 4. 检查合集数据一致性
-            orphaned_collections = db.query(Collection).filter(
-                ~Collection.project_id.in_(db_projects)
-            ).count()
-            
-            if orphaned_collections > 0:
-                issues.append({
-                    "type": "orphaned_collections",
-                    "count": orphaned_collections,
-                    "details": []
-                })
-            
             return {
                 'timestamp': datetime.utcnow().isoformat(),
                 'total_issues': len(issues),
@@ -362,7 +346,6 @@ def cleanup_orphaned_data(self) -> Dict[str, Any]:
                 'timestamp': datetime.utcnow().isoformat(),
                 'orphaned_tasks_cleaned': 0,
                 'orphaned_clips_cleaned': 0,
-                'orphaned_collections_cleaned': 0,
                 'orphaned_files_cleaned': 0
             }
             
@@ -389,17 +372,7 @@ def cleanup_orphaned_data(self) -> Dict[str, Any]:
                 cleanup_results['orphaned_clips_cleaned'] += 1
                 logger.info(f"清理孤立切片: {clip.id}")
             
-            # 3. 清理孤立合集
-            orphaned_collections = db.query(Collection).filter(
-                ~Collection.project_id.in_(db_projects)
-            ).all()
-            
-            for collection in orphaned_collections:
-                db.delete(collection)
-                cleanup_results['orphaned_collections_cleaned'] += 1
-                logger.info(f"清理孤立合集: {collection.id}")
-            
-            # 4. 清理孤立文件
+            # 3. 清理孤立文件
             cleanup_results['orphaned_files_cleaned'] = _cleanup_orphaned_files()
             
             db.commit()
@@ -407,7 +380,6 @@ def cleanup_orphaned_data(self) -> Dict[str, Any]:
             total_cleaned = (
                 cleanup_results['orphaned_tasks_cleaned'] +
                 cleanup_results['orphaned_clips_cleaned'] +
-                cleanup_results['orphaned_collections_cleaned'] +
                 cleanup_results['orphaned_files_cleaned']
             )
             

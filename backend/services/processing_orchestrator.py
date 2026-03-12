@@ -25,7 +25,6 @@ try:
     from backend.pipeline.step2_timeline import run_step2_timeline
     from backend.pipeline.step3_scoring import run_step3_scoring
     from backend.pipeline.step4_title import run_step4_title
-    from backend.pipeline.step5_clustering import run_step5_clustering
     from backend.pipeline.step6_video import run_step6_video
     logger.info("流水线模块导入成功")
 except ImportError as e:
@@ -125,29 +124,6 @@ except ImportError as e:
                 json.dump(mock_output, f, ensure_ascii=False, indent=2)
         return {"status": "skipped", "message": "流水线模块未正确导入"}
     
-    def run_step5_clustering(**kwargs): 
-        logger.warning("流水线模块未正确导入，使用占位符函数")
-        # 生成模拟输出
-        output_path = kwargs.get('output_path')
-        if output_path:
-            import json
-            from pathlib import Path
-            # 确保output_path是Path对象
-            if isinstance(output_path, str):
-                output_path = Path(output_path)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            mock_output = {
-                "collections": [
-                    {"collection_id": "1", "title": "测试合集1", "clips": ["1", "2"]},
-                    {"collection_id": "2", "title": "测试合集2", "clips": ["3", "4"]}
-                ],
-                "status": "completed",
-                "message": "占位符函数生成的模拟输出"
-            }
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(mock_output, f, ensure_ascii=False, indent=2)
-        return {"status": "skipped", "message": "流水线模块未正确导入"}
-    
     def run_step6_video(**kwargs): 
         logger.warning("流水线模块未正确导入，使用占位符函数")
         # 生成模拟输出
@@ -191,7 +167,6 @@ class ProcessingOrchestrator:
             ProcessingStep.STEP2_TIMELINE: run_step2_timeline,
             ProcessingStep.STEP3_SCORING: run_step3_scoring,
             ProcessingStep.STEP4_TITLE: run_step4_title,
-            ProcessingStep.STEP5_CLUSTERING: run_step5_clustering,
             ProcessingStep.STEP6_VIDEO: run_step6_video
         }
         
@@ -201,7 +176,6 @@ class ProcessingOrchestrator:
             # ProcessingStep.STEP2_TIMELINE: self.adapter.adapt_step2_timeline,
             # ProcessingStep.STEP3_SCORING: self.adapter.adapt_step3_scoring,
             # ProcessingStep.STEP4_TITLE: self.adapter.adapt_step4_title,
-            # ProcessingStep.STEP5_CLUSTERING: self.adapter.adapt_step5_clustering,
             # ProcessingStep.STEP6_VIDEO: self.adapter.adapt_step6_video
         }
         
@@ -312,7 +286,6 @@ class ProcessingOrchestrator:
                 ProcessingStep.STEP2_TIMELINE,
                 ProcessingStep.STEP3_SCORING,
                 ProcessingStep.STEP4_TITLE,
-                ProcessingStep.STEP5_CLUSTERING,
                 ProcessingStep.STEP6_VIDEO
             ]
             logger.info(f"开始执行项目 {self.project_id} 的完整流水线")
@@ -423,8 +396,8 @@ class ProcessingOrchestrator:
                     # 更新项目状态
                     update_data = {
                         "current_step": current_step,
-                        "total_steps": 6,
-                        "status": "processing" if current_step < 6 else "completed"
+                        "total_steps": 5,
+                        "status": "processing" if current_step < 5 else "completed"
                     }
                     if progress is not None:
                         update_data["progress"] = progress
@@ -467,24 +440,20 @@ class ProcessingOrchestrator:
                     elif progress <= 70:
                         current_step = 4
                         step_name = "标题生成"
-                    elif progress <= 85:
-                        current_step = 5
-                        step_name = "主题聚类"
                     elif progress <= 95:
-                        current_step = 6
+                        current_step = 5
                         step_name = "视频切割"
                     else:
-                        current_step = 6
+                        current_step = 5
                         step_name = "处理完成"
             else:
                 # 根据步骤编号获取步骤名称
                 step_name_map = {
                     1: "大纲提取",
-                    2: "时间定位", 
+                    2: "时间定位",
                     3: "内容评分",
                     4: "标题生成",
-                    5: "主题聚类",
-                    6: "视频切割"
+                    5: "视频切割"
                 }
                 step_name = step_name_map.get(current_step, "处理中...")
             
@@ -503,7 +472,7 @@ class ProcessingOrchestrator:
                 "status": status.value,
                 "progress": progress or 0,
                 "current_step": current_step,
-                "total_steps": 6,
+                "total_steps": 5,
                 "step_name": step_name,
                 "phase": step_name,
                 "message": progress_message,
@@ -579,8 +548,7 @@ class ProcessingOrchestrator:
             ProcessingStep.STEP2_TIMELINE: 2,
             ProcessingStep.STEP3_SCORING: 3,
             ProcessingStep.STEP4_TITLE: 4,
-            ProcessingStep.STEP5_CLUSTERING: 5,
-            ProcessingStep.STEP6_VIDEO: 6
+            ProcessingStep.STEP6_VIDEO: 5
         }
         return step_number_map.get(step, 0)
     
@@ -591,7 +559,6 @@ class ProcessingOrchestrator:
             ProcessingStep.STEP2_TIMELINE: 30,
             ProcessingStep.STEP3_SCORING: 50,
             ProcessingStep.STEP4_TITLE: 70,
-            ProcessingStep.STEP5_CLUSTERING: 85,
             ProcessingStep.STEP6_VIDEO: 95
         }
         return step_progress_map.get(step, 0)
@@ -599,7 +566,6 @@ class ProcessingOrchestrator:
     def _save_step_result(self, step: ProcessingStep, result: Any):
         """保存步骤结果到数据库"""
         # 这里可以根据需要将结果保存到相应的数据库表
-        # 比如切片结果保存到Clip表，合集结果保存到Collection表
         logger.info(f"步骤 {step.value} 结果已保存")
     
     def _save_pipeline_results_to_database(self, results: Dict[str, Any]):
@@ -635,8 +601,7 @@ class ProcessingOrchestrator:
             ProcessingStep.STEP2_TIMELINE: [ProcessingStep.STEP1_OUTLINE],
             ProcessingStep.STEP3_SCORING: [ProcessingStep.STEP2_TIMELINE],
             ProcessingStep.STEP4_TITLE: [ProcessingStep.STEP3_SCORING],
-            ProcessingStep.STEP5_CLUSTERING: [ProcessingStep.STEP4_TITLE],
-            ProcessingStep.STEP6_VIDEO: [ProcessingStep.STEP5_CLUSTERING]
+            ProcessingStep.STEP6_VIDEO: [ProcessingStep.STEP4_TITLE]
         }
         
         # 只检查第一个步骤的依赖，因为其他步骤会在执行过程中逐步检查
@@ -722,7 +687,6 @@ class ProcessingOrchestrator:
             ProcessingStep.STEP2_TIMELINE,
             ProcessingStep.STEP3_SCORING,
             ProcessingStep.STEP4_TITLE,
-            ProcessingStep.STEP5_CLUSTERING,
             ProcessingStep.STEP6_VIDEO
         ]
         

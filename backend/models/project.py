@@ -125,11 +125,6 @@ class Project(BaseModel):
         back_populates="project",
         cascade="all, delete-orphan"
     )
-    collections = relationship(
-        "Collection", 
-        back_populates="project",
-        cascade="all, delete-orphan"
-    )
     tasks = relationship(
         "Task", 
         back_populates="project",
@@ -143,11 +138,6 @@ class Project(BaseModel):
     def clips_count(self):
         """获取切片数量"""
         return len(self.clips) if self.clips else 0
-    
-    @property
-    def collections_count(self):
-        """获取合集数量"""
-        return len(self.collections) if self.collections else 0
     
     @property
     def is_processing(self):

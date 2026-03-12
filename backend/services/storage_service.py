@@ -27,8 +27,7 @@ class StorageService:
         directories = [
             self.project_dir / "raw",
             self.project_dir / "processing",
-            self.project_dir / "output" / "clips",
-            self.project_dir / "output" / "collections"
+            self.project_dir / "output" / "clips"
         ]
         
         for directory in directories:
@@ -59,8 +58,6 @@ class StorageService:
             target_path = self.project_dir / "raw" / target_name
         elif file_type == "clip":
             target_path = self.project_dir / "output" / "clips" / target_name
-        elif file_type == "collection":
-            target_path = self.project_dir / "output" / "collections" / target_name
         else:
             raise ValueError(f"不支持的文件类型: {file_type}")
         
@@ -93,19 +90,6 @@ class StorageService:
         logger.info(f"保存切片文件: {target_path}")
         return str(target_path)
     
-    def save_collection_file(self, collection_data: Dict[str, Any], collection_id: str) -> str:
-        """保存合集文件并返回路径"""
-        # 这里应该包含实际的合集文件保存逻辑
-        # 暂时返回模拟路径
-        collection_file = f"collection_{collection_id}.mp4"
-        target_path = self.project_dir / "output" / "collections" / collection_file
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 创建模拟文件（实际应该保存真实的合集文件）
-        target_path.touch()
-        logger.info(f"保存合集文件: {target_path}")
-        return str(target_path)
-    
     def get_file_content(self, file_path: str) -> Optional[Dict[str, Any]]:
         """获取文件内容"""
         try:
@@ -124,8 +108,6 @@ class StorageService:
             return self.project_dir / "raw" / file_name
         elif file_type == "clip":
             return self.project_dir / "output" / "clips" / file_name
-        elif file_type == "collection":
-            return self.project_dir / "output" / "collections" / file_name
         else:
             return None
     

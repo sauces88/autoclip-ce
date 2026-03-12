@@ -36,7 +36,6 @@ class UnifiedPathManager:
             self._data_dir,
             self._output_dir,
             self._output_dir / "clips",
-            self._output_dir / "collections",
             self._output_dir / "metadata",
             self._data_dir / "projects",
             self._data_dir / "uploads",
@@ -66,11 +65,6 @@ class UnifiedPathManager:
     def clips_directory(self) -> Path:
         """切片目录"""
         return self._output_dir / "clips"
-    
-    @property
-    def collections_directory(self) -> Path:
-        """合集目录"""
-        return self._output_dir / "collections"
     
     @property
     def metadata_directory(self) -> Path:
@@ -121,12 +115,6 @@ class UnifiedPathManager:
         clips_dir.mkdir(exist_ok=True)
         return clips_dir
     
-    def get_project_collections_directory(self, project_id: str) -> Path:
-        """获取项目合集目录"""
-        collections_dir = self.collections_directory / project_id
-        collections_dir.mkdir(exist_ok=True)
-        return collections_dir
-    
     def get_database_path(self) -> Path:
         """获取数据库路径"""
         return self.data_directory / "autoclip.db"
@@ -141,13 +129,6 @@ class UnifiedPathManager:
         # 清理文件名，移除特殊字符
         safe_title = "".join(c for c in clip_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
         return clips_dir / f"{safe_title}.{extension}"
-    
-    def get_collection_file_path(self, project_id: str, collection_title: str, extension: str = "mp4") -> Path:
-        """获取合集文件路径"""
-        collections_dir = self.get_project_collections_directory(project_id)
-        # 清理文件名，移除特殊字符
-        safe_title = "".join(c for c in collection_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        return collections_dir / f"{safe_title}.{extension}"
     
     def get_metadata_file_path(self, project_id: str, step_name: str, filename: str) -> Path:
         """获取元数据文件路径"""
@@ -171,7 +152,6 @@ class UnifiedPathManager:
                 "data_directory": self.data_directory,
                 "output_directory": self.output_directory,
                 "clips_directory": self.clips_directory,
-                "collections_directory": self.collections_directory,
                 "metadata_directory": self.metadata_directory,
                 "projects_directory": self.projects_directory
             }
@@ -204,7 +184,6 @@ class UnifiedPathManager:
             "data_directory": str(self.data_directory),
             "output_directory": str(self.output_directory),
             "clips_directory": str(self.clips_directory),
-            "collections_directory": str(self.collections_directory),
             "metadata_directory": str(self.metadata_directory),
             "projects_directory": str(self.projects_directory),
             "uploads_directory": str(self.uploads_directory),
@@ -220,7 +199,6 @@ PROJECT_ROOT = path_manager.project_root
 DATA_DIR = path_manager.data_directory
 OUTPUT_DIR = path_manager.output_directory
 CLIPS_DIR = path_manager.clips_directory
-COLLECTIONS_DIR = path_manager.collections_directory
 METADATA_DIR = path_manager.metadata_directory
 PROJECTS_DIR = path_manager.projects_directory
 UPLOADS_DIR = path_manager.uploads_directory
@@ -235,10 +213,6 @@ def get_project_directory(project_id: str) -> Path:
 def get_clip_file_path(project_id: str, clip_title: str, extension: str = "mp4") -> Path:
     """获取切片文件路径"""
     return path_manager.get_clip_file_path(project_id, clip_title, extension)
-
-def get_collection_file_path(project_id: str, collection_title: str, extension: str = "mp4") -> Path:
-    """获取合集文件路径"""
-    return path_manager.get_collection_file_path(project_id, collection_title, extension)
 
 def validate_paths() -> Dict[str, Any]:
     """验证所有路径配置"""

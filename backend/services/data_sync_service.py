@@ -239,216 +239,6 @@ class DataSyncService:
             logger.error(f"同步切片数据失败: {str(e)}")
             return 0
     
-    def _sync_collections_from_filesystem(self, project_id: str, project_dir: Path) -> int:
-        """从文件系统同步合集数据"""
-        try:
-            # 查找合集数据文件
-            collections_files = [
-                project_dir / "step6_video" / "collections_metadata.json",  # 最完整的数据源
-                project_dir / "step5_clustering" / "step5_clustering.json",
-                project_dir / "metadata" / "step5_collections.json",  # 添加step5_collections.json
-                project_dir / "collections_metadata.json",
-                project_dir / "metadata" / "collections_metadata.json"
-            ]
-            
-            collections_data = None
-            for collections_file in collections_files:
-                logger.info(f"检查合集文件: {collections_file}")
-                if collections_file.exists():
-                    try:
-                        with open(collections_file, 'r', encoding='utf-8') as f:
-                            collections_data = json.load(f)
-                        logger.info(f"成功读取合集文件: {collections_file}, 数据长度: {len(collections_data) if isinstance(collections_data, list) else 'not list'}")
-                        break
-                    except Exception as e:
-                        logger.warning(f"读取合集文件失败 {collections_file}: {e}")
-                else:
-                    logger.info(f"合集文件不存在: {collections_file}")
-            
-            if not collections_data:
-                logger.info(f"项目 {project_id} 没有找到合集数据")
-                return 0
-            
-            # 确保collections_data是列表
-            if isinstance(collections_data, dict) and "collections" in collections_data:
-                collections_data = collections_data["collections"]
-            elif not isinstance(collections_data, list):
-                logger.warning(f"项目 {project_id} 合集数据格式不正确")
-                return 0
-            
-            # 读取删除记录文件
-            deleted_collections_file = project_dir / "deleted_collections.json"
-            deleted_collections = set()
-            if deleted_collections_file.exists():
-                try:
-                    with open(deleted_collections_file, 'r', encoding='utf-8') as f:
-                        deleted_data = json.load(f)
-                        deleted_collections = set(deleted_data.get('deleted_collection_ids', []))
-                except Exception as e:
-                    logger.warning(f"读取删除记录失败: {e}")
-            
-            synced_count = 0
-            for collection_data in collections_data:
-                try:
-                    collection_id = collection_data.get("id", "")
-                    collection_title = collection_data.get("collection_title", "")
-                    
-                    # 检查是否已被删除
-                    if collection_id in deleted_collections:
-                        logger.info(f"合集 {collection_id} 已被删除，跳过同步")
-                        continue
-                    
-                    # 检查合集是否已存在
-                    existing_collection = self.db.query(Collection).filter(
-                        Collection.project_id == project_id,
-                        Collection.name == collection_title
-                    ).first()
-                    
-                    if existing_collection:
-                        # 合集已存在，检查是否需要建立关联关系
-                        collection = existing_collection
-                        logger.info(f"合集 {collection_title} 已存在，检查关联关系")
-                    else:
-                        # 创建新合集
-                        collection = None
-                    
-                    # 构建合集视频文件路径，强制使用项目内目录
-                    # 尝试多种可能的文件名格式
-                    possible_filenames = [
-                        f"{collection_id}_{collection_title}.mp4",
-                        f"{collection_title}.mp4",
-                        f"collection_{collection_id}.mp4"
-                    ]
-                    
-                    from ..core.path_utils import get_project_directory, get_data_directory
-                    project_dir = get_project_directory(project_id)
-                    project_collections_dir = project_dir / "output" / "collections"
-                    project_collections_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    video_path = None
-                    # 首先在项目目录中查找
-                    for filename in possible_filenames:
-                        project_video_path = project_collections_dir / filename
-                        if project_video_path.exists():
-                            video_path = str(project_video_path)
-                            break
-                    
-                    # 如果项目目录中没找到，尝试全局目录并迁移
-                    if not video_path:
-                        for filename in possible_filenames:
-                            legacy_video_path = get_data_directory() / "output" / "collections" / filename
-                            if legacy_video_path.exists():
-                                # 迁移到项目目录
-                                project_video_path = project_collections_dir / filename
-                                import shutil
-                                shutil.copy2(legacy_video_path, project_video_path)
-                                video_path = str(project_video_path)
-                                logger.info(f"将合集文件从全局目录迁移到项目目录: {legacy_video_path} -> {project_video_path}")
-                                break
-                    
-                    # 如果还是没找到，使用项目内路径（文件可能还未生成）
-                    if not video_path:
-                        video_path = str(project_collections_dir / possible_filenames[0])
-                    
-                    # 将数字格式的clip_ids转换为UUID格式
-                    original_clip_ids = collection_data.get('clip_ids', [])
-                    uuid_clip_ids = []
-                    
-                    # 获取项目中所有切片的映射关系（数字ID -> UUID）
-                    clips = self.db.query(Clip).filter(Clip.project_id == project_id).all()
-                    clip_id_mapping = {}
-                    for clip in clips:
-                        # 从clip_metadata中获取原始ID
-                        if clip.clip_metadata and 'id' in clip.clip_metadata:
-                            original_id = str(clip.clip_metadata['id'])
-                            clip_id_mapping[original_id] = clip.id
-                    
-                    # 转换clip_ids
-                    for original_id in original_clip_ids:
-                        if str(original_id) in clip_id_mapping:
-                            uuid_clip_ids.append(clip_id_mapping[str(original_id)])
-                        else:
-                            logger.warning(f"找不到切片ID {original_id} 对应的UUID")
-                    
-                    # 如果合集不存在，创建新合集
-                    if not collection:
-                        collection = Collection(
-                            project_id=project_id,
-                            name=collection_title,
-                            description=collection_data.get('collection_summary', ''),
-                            video_path=video_path,
-                            export_path=video_path,  # 设置export_path
-                            collection_metadata={
-                                'clip_ids': uuid_clip_ids,  # 使用UUID格式的clip_ids
-                                'original_clip_ids': original_clip_ids,  # 保留原始数字ID
-                                'collection_type': 'ai_recommended',
-                                'original_id': collection_id
-                            },
-                            status=CollectionStatus.COMPLETED
-                        )
-                        
-                        self.db.add(collection)
-                        self.db.flush()  # 确保collection有ID
-                        logger.info(f"创建新合集: {collection.id}")
-                    else:
-                        # 更新现有合集的元数据
-                        if not collection.collection_metadata:
-                            collection.collection_metadata = {}
-                        collection.collection_metadata.update({
-                            'clip_ids': uuid_clip_ids,
-                            'original_clip_ids': original_clip_ids,
-                            'collection_type': 'ai_recommended',
-                            'original_id': collection_id
-                        })
-                        collection.video_path = video_path
-                        collection.export_path = video_path  # 设置export_path
-                        logger.info(f"更新现有合集: {collection.id}")
-                    
-                    # 建立合集和切片的关联关系
-                    for i, clip_id in enumerate(uuid_clip_ids):
-                        try:
-                            # 检查切片是否存在
-                            clip = self.db.query(Clip).filter(Clip.id == clip_id).first()
-                            if clip:
-                                # 检查关联关系是否已存在
-                                from ..models.collection import clip_collection
-                                existing_relation = self.db.execute(
-                                    clip_collection.select().where(
-                                        clip_collection.c.clip_id == clip_id,
-                                        clip_collection.c.collection_id == collection.id
-                                    )
-                                ).first()
-                                
-                                if not existing_relation:
-                                    # 使用关联表插入记录
-                                    stmt = clip_collection.insert().values(
-                                        clip_id=clip_id,
-                                        collection_id=collection.id,
-                                        order_index=i
-                                    )
-                                    self.db.execute(stmt)
-                                    logger.info(f"建立合集 {collection.id} 和切片 {clip_id} 的关联关系")
-                                else:
-                                    logger.info(f"合集 {collection.id} 和切片 {clip_id} 的关联关系已存在")
-                            else:
-                                logger.warning(f"切片 {clip_id} 不存在，跳过关联")
-                        except Exception as e:
-                            logger.error(f"建立合集和切片关联关系失败: {e}")
-                    
-                    synced_count += 1
-                    
-                except Exception as e:
-                    logger.error(f"同步合集失败: {e}")
-                    continue
-            
-            self.db.commit()
-            logger.info(f"项目 {project_id} 同步了 {synced_count} 个合集")
-            return synced_count
-            
-        except Exception as e:
-            logger.error(f"同步合集数据失败: {str(e)}")
-            return 0
-    
     def sync_project_data(self, project_id: str, project_dir: Path) -> Dict[str, Any]:
         """同步项目数据到数据库"""
         try:
@@ -458,7 +248,7 @@ class DataSyncService:
             clips_count = self._sync_clips(project_id, project_dir)
 
             # 更新项目统计信息
-            self._update_project_stats(project_id, clips_count, 0)
+            self._update_project_stats(project_id, clips_count)
 
             logger.info(f"项目数据同步完成: {project_id}, clips: {clips_count}")
 
@@ -530,66 +320,14 @@ class DataSyncService:
             self.db.rollback()
             raise
     
-    def _sync_collections(self, project_id: str, project_dir: Path) -> int:
-        """同步collections数据到数据库"""
-        collections_file = project_dir / "step5_collections.json"
-        if not collections_file.exists():
-            logger.warning(f"Collections文件不存在: {collections_file}")
-            return 0
-        
-        try:
-            with open(collections_file, 'r', encoding='utf-8') as f:
-                collections_data = json.load(f)
-            
-            collections_count = 0
-            for collection_data in collections_data:
-                # 检查是否已存在
-                existing_collection = self.db.query(Collection).filter(
-                    Collection.project_id == project_id,
-                    Collection.name == collection_data.get("collection_title")
-                ).first()
-                
-                if existing_collection:
-                    logger.info(f"Collection已存在，跳过: {collection_data.get('collection_title')}")
-                    continue
-                
-                # 创建新的collection记录
-                collection = Collection(
-                    project_id=project_id,
-                    name=collection_data.get("collection_title", ""),
-                    description=collection_data.get("collection_summary", ""),
-                    theme="default",
-                    status=CollectionStatus.COMPLETED,
-                    tags=[],
-                    collection_metadata={
-                        "clip_ids": collection_data.get("clip_ids", []),
-                        "original_id": collection_data.get("id"),
-                        "collection_type": "ai_recommended"  # 标记为AI推荐
-                    }
-                )
-                
-                self.db.add(collection)
-                collections_count += 1
-                logger.info(f"创建collection: {collection.name}")
-            
-            self.db.commit()
-            logger.info(f"同步了 {collections_count} 个collections")
-            return collections_count
-            
-        except Exception as e:
-            logger.error(f"同步collections失败: {str(e)}")
-            self.db.rollback()
-            raise
-    
-    def _update_project_stats(self, project_id: str, clips_count: int, collections_count: int):
+    def _update_project_stats(self, project_id: str, clips_count: int):
         """更新项目统计信息"""
         try:
             project = self.db.query(Project).filter(Project.id == project_id).first()
             if project:
                 project.total_clips = clips_count
-                project.total_collections = collections_count
                 self.db.commit()
-                logger.info(f"更新项目统计: clips={clips_count}, collections={collections_count}")
+                logger.info(f"更新项目统计: clips={clips_count}")
         except Exception as e:
             logger.error(f"更新项目统计失败: {str(e)}")
     
@@ -652,11 +390,10 @@ class DataSyncService:
                         # 更新项目状态和统计信息
                         project.status = ProjectStatus.COMPLETED
                         project.total_clips = step6_output.get("clips_count", 0)
-                        project.total_collections = step6_output.get("collections_count", 0)
                         project.completed_at = datetime.now()
-                        
+
                         self.db.commit()
-                        logger.info(f"项目 {project_id} 状态已更新为已完成，切片数: {project.total_clips}, 合集数: {project.total_collections}")
+                        logger.info(f"项目 {project_id} 状态已更新为已完成，切片数: {project.total_clips}")
                         
                     except Exception as e:
                         logger.error(f"读取step6输出文件失败: {e}")

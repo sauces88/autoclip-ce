@@ -1,5 +1,5 @@
 """
-Step 6: 视频生成 - 根据聚类结果生成最终视频切片
+Step 6: 视频生成 - 根据标题数据生成最终视频切片
 """
 import json
 import logging
@@ -9,27 +9,26 @@ from pathlib import Path
 
 # 导入依赖
 from ..utils.video_processor import VideoProcessor
-from ..core.shared_config import METADATA_DIR, CLIPS_DIR, COLLECTIONS_DIR
+from ..core.shared_config import METADATA_DIR, CLIPS_DIR
 
 logger = logging.getLogger(__name__)
 
 class VideoGenerator:
     """视频生成器"""
-    
-    def __init__(self, clips_dir: Optional[str] = None, collections_dir: Optional[str] = None, metadata_dir: Optional[str] = None):
+
+    def __init__(self, clips_dir: Optional[str] = None, metadata_dir: Optional[str] = None):
         # 强制使用项目内专属目录，不使用全局目录作为后备
         if not clips_dir:
             raise ValueError("clips_dir 参数是必需的，不能使用全局路径")
 
         self.clips_dir = Path(clips_dir)
-        self.collections_dir = Path(collections_dir) if collections_dir else None
         self.metadata_dir = Path(metadata_dir) if metadata_dir else METADATA_DIR
 
         # 确保目录存在
         self.clips_dir.mkdir(parents=True, exist_ok=True)
 
         # 创建VideoProcessor实例，强制使用项目内路径
-        self.video_processor = VideoProcessor(clips_dir=str(self.clips_dir), collections_dir=collections_dir)
+        self.video_processor = VideoProcessor(clips_dir=str(self.clips_dir))
     
     def generate_clips(self, clips_with_titles: List[Dict], input_video: Path) -> List[Path]:
         """
@@ -60,24 +59,6 @@ class VideoGenerator:
         logger.info(f"切片视频生成完成，共{len(successful_clips)}个切片")
         return successful_clips
     
-    def generate_collections(self, collections_data: List[Dict]) -> List[Path]:
-        """
-        生成合集视频
-        
-        Args:
-            collections_data: 合集数据
-            
-        Returns:
-            生成的合集视频路径列表
-        """
-        logger.info("开始生成合集视频...")
-        
-        # 生成合集视频
-        successful_collections = self.video_processor.create_collections_from_metadata(collections_data)
-        
-        logger.info(f"合集视频生成完成，共{len(successful_collections)}个合集")
-        return successful_collections
-    
     def save_clip_metadata(self, clips_with_titles: List[Dict], output_path: Optional[Path] = None) -> Path:
         """
         保存最终的切片元数据到clips_metadata.json
@@ -106,56 +87,30 @@ class VideoGenerator:
         logger.info(f"切片元数据已保存到: {output_path}")
         return output_path
     
-    def save_collection_metadata(self, collections_data: List[Dict], output_path: Optional[Path] = None) -> Path:
-        """
-        保存合集元数据
-        
-        Args:
-            collections_data: 合集数据
-            output_path: 输出路径
-            
-        Returns:
-            保存的文件路径
-        """
-        if output_path is None:
-            output_path = self.metadata_dir / "collections_metadata.json"
-        
-        # 确保目录存在
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 保存数据
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(collections_data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"合集元数据已保存到: {output_path}")
-        return output_path
-
-def run_step6_video(clips_with_titles_path: Path, collections_path: Path, 
-                   input_video: Path, output_dir: Optional[Path] = None, 
-                   clips_dir: Optional[str] = None, collections_dir: Optional[str] = None, 
+def run_step6_video(clips_with_titles_path: Path,
+                   input_video: Path, output_dir: Optional[Path] = None,
+                   clips_dir: Optional[str] = None,
                    metadata_dir: Optional[str] = None) -> Dict:
     """
     运行Step 6: 视频切割
-    
+
     Args:
         clips_with_titles_path: 带标题的片段文件路径
-        collections_path: 合集文件路径
         input_video: 输入视频路径
         output_dir: 输出目录
-        
+        clips_dir: 切片输出目录
+        metadata_dir: 元数据目录
+
     Returns:
         生成结果信息
     """
     # 加载数据
     with open(clips_with_titles_path, 'r', encoding='utf-8') as f:
         clips_with_titles = json.load(f)
-    
-    with open(collections_path, 'r', encoding='utf-8') as f:
-        collections_data = json.load(f)
-    
+
     # 创建视频生成器
-    generator = VideoGenerator(clips_dir=clips_dir, collections_dir=collections_dir, metadata_dir=metadata_dir)
-    
+    generator = VideoGenerator(clips_dir=clips_dir, metadata_dir=metadata_dir)
+
     # 生成切片视频
     successful_clips = generator.generate_clips(clips_with_titles, input_video)
 
@@ -173,17 +128,13 @@ def run_step6_video(clips_with_titles_path: Path, collections_path: Path,
     if metadata_dir:
         project_metadata_dir = Path(metadata_dir)
         generator.save_clip_metadata(clips_with_titles, project_metadata_dir / "clips_metadata.json")
-        generator.save_collection_metadata(collections_data, project_metadata_dir / "collections_metadata.json")
     else:
         generator.save_clip_metadata(clips_with_titles)
-        generator.save_collection_metadata(collections_data)
-    
+
     # 返回结果信息
     result = {
         'clips_generated': len(successful_clips),
-        'collections_generated': 0,
         'clip_paths': [str(path) for path in successful_clips],
-        'collection_paths': []
     }
 
     logger.info(f"视频生成完成: {result['clips_generated']}个切片")

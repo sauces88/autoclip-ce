@@ -203,8 +203,7 @@ def backup_project_data(self, project_id: str, backup_path: str = None) -> Dict[
                     'updated_at': project.updated_at.isoformat()
                 },
                 'tasks': [],
-                'clips': [],
-                'collections': []
+                'clips': []
             }
             
             # 备份任务数据

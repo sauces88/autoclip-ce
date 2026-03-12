@@ -53,30 +53,6 @@ body {
   background: #555555;
 }
 
-/* 合集横向滚动容器样式 */
-.collections-scroll-container {
-  scrollbar-width: thin;
-  scrollbar-color: #404040 #1a1a1a;
-}
-
-.collections-scroll-container::-webkit-scrollbar {
-  height: 6px;
-}
-
-.collections-scroll-container::-webkit-scrollbar-track {
-  background: #1a1a1a;
-  border-radius: 3px;
-}
-
-.collections-scroll-container::-webkit-scrollbar-thumb {
-  background: #404040;
-  border-radius: 3px;
-}
-
-.collections-scroll-container::-webkit-scrollbar-thumb:hover {
-  background: #555555;
-}
-
 /* Ant Design 深色主题覆盖 */
 .ant-card {
   background-color: #1a1a1a !important;

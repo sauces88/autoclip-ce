@@ -19,7 +19,6 @@ from ..pipeline.step1_outline import run_step1_outline
 from ..pipeline.step2_timeline import run_step2_timeline
 from ..pipeline.step3_scoring import run_step3_scoring
 from ..pipeline.step4_title import run_step4_title
-from ..pipeline.step5_clustering import run_step5_clustering
 from ..pipeline.step6_video import run_step6_video
 
 logger = logging.getLogger(__name__)
@@ -109,7 +108,6 @@ class PipelineAdapter:
                 ("step2_timeline", "时间线提取", self._execute_step2),
                 ("step3_scoring", "内容评分", self._execute_step3),
                 ("step4_title", "标题生成", self._execute_step4),
-                ("step5_clustering", "主题聚类", self._execute_step5),
                 ("step6_video", "视频生成", self._execute_step6)
             ]
             
@@ -313,63 +311,27 @@ class PipelineAdapter:
             logger.error(f"步骤4执行失败: {e}")
             return {"status": "failed", "message": str(e)}
     
-    async def _execute_step5(self) -> Dict[str, Any]:
-        """执行步骤5：主题聚类"""
-        try:
-            titles_path = self.project_paths["metadata_dir"] / "step4_titles.json"
-            output_path = self.project_paths["metadata_dir"] / "step5_collections.json"
-            
-            if not titles_path.exists():
-                return {"status": "failed", "message": "步骤4结果文件不存在"}
-            
-            # 获取项目信息以确定视频分类
-            project = self.db.query(Project).filter(Project.id == self.project_id).first()
-            video_category = "default"
-            if project and project.project_metadata:
-                video_category = project.project_metadata.get("video_category", "default")
-            
-            # 获取对应的提示词文件
-            prompt_files = get_prompt_files(video_category)
-            
-            result = run_step5_clustering(
-                clips_with_titles_path=titles_path,
-                output_path=output_path,
-                metadata_dir=self.project_paths["metadata_dir"],
-                prompt_files=prompt_files
-            )
-            
-            return {"status": "success", "result": result, "output_path": str(output_path)}
-            
-        except Exception as e:
-            logger.error(f"步骤5执行失败: {e}")
-            return {"status": "failed", "message": str(e)}
-    
     async def _execute_step6(self) -> Dict[str, Any]:
         """执行步骤6：视频生成"""
         try:
             titles_path = self.project_paths["metadata_dir"] / "step4_titles.json"
-            collections_path = self.project_paths["metadata_dir"] / "step5_collections.json"
             input_video_path = self.project_paths["input_dir"] / "input.mp4"
-            
+
             if not titles_path.exists():
                 return {"status": "failed", "message": "步骤4结果文件不存在"}
-            if not collections_path.exists():
-                return {"status": "failed", "message": "步骤5结果文件不存在"}
             if not input_video_path.exists():
                 return {"status": "failed", "message": "输入视频文件不存在"}
-            
+
             result = run_step6_video(
                 clips_with_titles_path=titles_path,
-                collections_path=collections_path,
                 input_video=input_video_path,
                 output_dir=self.project_paths["output_dir"],
                 clips_dir=str(self.project_paths["clips_dir"]),
-                collections_dir=str(self.project_paths["collections_dir"]),
                 metadata_dir=self.project_paths["metadata_dir"]
             )
-            
+
             return {"status": "success", "result": result}
-            
+
         except Exception as e:
             logger.error(f"步骤6执行失败: {e}")
             return {"status": "failed", "message": str(e)}
@@ -413,135 +375,9 @@ class PipelineAdapter:
                 project.status = "completed"
                 self.db.commit()
                 logger.info(f"项目 {self.project_id} 状态已更新为已完成")
-            
-            # 同步切片和合集数据到数据库
-            await self._sync_clips_and_collections_to_database()
-                
+
         except Exception as e:
             logger.error(f"保存结果到数据库失败: {e}")
-    
-    async def _sync_clips_and_collections_to_database(self):
-        """同步切片和合集数据到数据库"""
-        try:
-            from ..models.clip import Clip, ClipStatus
-            from ..models.collection import Collection, CollectionStatus
-            from datetime import datetime
-            
-            # 清理现有数据
-            self.db.query(Clip).filter(Clip.project_id == self.project_id).delete()
-            self.db.query(Collection).filter(Collection.project_id == self.project_id).delete()
-            
-            # 同步切片数据
-            clips_metadata_file = self.project_paths["metadata_dir"] / "clips_metadata.json"
-            if clips_metadata_file.exists():
-                with open(clips_metadata_file, 'r', encoding='utf-8') as f:
-                    clips_data = json.load(f)
-                
-                clips_count = 0
-                for clip_data in clips_data:
-                    try:
-                        # 构建切片文件路径
-                        clip_filename = f"{clip_data['id']}_{clip_data['generated_title']}.mp4"
-                        clip_path = self.project_paths["clips_dir"] / clip_filename
-                        
-                        if not clip_path.exists():
-                            continue
-                        
-                        # 计算时长
-                        start_time_str = clip_data.get('start_time', '00:00:00,000')
-                        end_time_str = clip_data.get('end_time', '00:00:00,000')
-                        start_seconds = self._parse_time(start_time_str)
-                        end_seconds = self._parse_time(end_time_str)
-                        duration = end_seconds - start_seconds
-                        
-                        # 创建切片记录
-                        clip = Clip(
-                            id=f"{self.project_id}_{clip_data['id']}",
-                            project_id=self.project_id,
-                            title=clip_data['generated_title'],
-                            description=clip_data.get('recommend_reason', ''),
-                            start_time=int(start_seconds),
-                            end_time=int(end_seconds),
-                            duration=int(duration),
-                            video_path=str(clip_path),
-                            score=clip_data.get('final_score', 0),
-                            recommendation_reason=clip_data.get('recommend_reason', ''),
-                            status=ClipStatus.COMPLETED,
-                            clip_metadata={
-                                'outline': clip_data.get('outline', ''),
-                                'content': clip_data.get('content', []),
-                                'chunk_index': clip_data.get('chunk_index', 0)
-                            },
-                            created_at=datetime.utcnow(),
-                            updated_at=datetime.utcnow()
-                        )
-                        
-                        self.db.add(clip)
-                        clips_count += 1
-                        
-                    except Exception as e:
-                        logger.error(f"同步切片失败: {e}")
-                        continue
-                
-                logger.info(f"同步了 {clips_count} 个切片到数据库")
-            
-            # 同步合集数据
-            collections_metadata_file = self.project_paths["metadata_dir"] / "collections_metadata.json"
-            if collections_metadata_file.exists():
-                with open(collections_metadata_file, 'r', encoding='utf-8') as f:
-                    collections_data = json.load(f)
-                
-                collections_count = 0
-                for collection_data in collections_data:
-                    try:
-                        # 构建合集文件路径
-                        collection_filename = f"{collection_data['collection_title']}.mp4"
-                        collection_path = self.project_paths["collections_dir"] / collection_filename
-                        
-                        if not collection_path.exists():
-                            continue
-                        
-                        # 将简化的clip_ids转换为完整的切片ID
-                        simplified_clip_ids = collection_data.get('clip_ids', [])
-                        full_clip_ids = []
-                        for clip_id in simplified_clip_ids:
-                            full_clip_id = f"{self.project_id}_{clip_id}"
-                            full_clip_ids.append(full_clip_id)
-                        
-                        # 创建合集记录
-                        collection = Collection(
-                            id=f"{self.project_id}_collection_{collection_data['id']}",
-                            project_id=self.project_id,
-                            name=collection_data['collection_title'],
-                            description=collection_data.get('collection_summary', ''),
-                            theme="投资理财",
-                            status=CollectionStatus.COMPLETED,
-                            tags=["投资", "理财", "策略"],
-                            collection_metadata={
-                                'clip_ids': full_clip_ids,  # 使用完整的切片ID
-                                'simplified_clip_ids': simplified_clip_ids,  # 保留原始简化ID
-                                'generated_by': 'pipeline'
-                            },
-                            created_at=datetime.utcnow(),
-                            updated_at=datetime.utcnow()
-                        )
-                        
-                        self.db.add(collection)
-                        collections_count += 1
-                        
-                    except Exception as e:
-                        logger.error(f"同步合集失败: {e}")
-                        continue
-                
-                logger.info(f"同步了 {collections_count} 个合集到数据库")
-            
-            # 提交事务
-            self.db.commit()
-            logger.info(f"项目 {self.project_id} 数据同步完成")
-            
-        except Exception as e:
-            logger.error(f"同步数据到数据库失败: {e}")
-            self.db.rollback()
     
     def _parse_time(self, time_str: str) -> float:
         """解析时间字符串为秒数"""

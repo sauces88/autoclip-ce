@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from ..core.config import get_data_directory
 from ..models.project import Project
 from ..models.clip import Clip
-from ..models.collection import Collection
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,6 @@ class OptimizedStorageService:
             self.project_dir / "raw",           # 原始文件
             self.project_dir / "processing",    # 处理中间文件
             self.project_dir / "output" / "clips",      # 切片文件
-            self.project_dir / "output" / "collections" # 合集文件
         ]
         
         for directory in directories:
@@ -130,57 +128,6 @@ class OptimizedStorageService:
             self.db.rollback()
             raise
     
-    # ==================== 合集文件管理 ====================
-    
-    def save_collection_file(self, collection_data: Dict[str, Any], collection_id: str) -> str:
-        """保存合集文件到文件系统，返回相对路径"""
-        try:
-            # 这里应该包含实际的合集文件保存逻辑
-            # 暂时返回模拟路径
-            collection_file = f"collection_{collection_id}.mp4"
-            target_path = self.project_dir / "output" / "collections" / collection_file
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # 创建模拟文件（实际应该保存真实的合集文件）
-            target_path.touch()
-            
-            # 返回相对路径
-            relative_path = f"projects/{self.project_id}/output/collections/{collection_file}"
-            logger.info(f"合集文件已保存: {relative_path}")
-            return relative_path
-            
-        except Exception as e:
-            logger.error(f"保存合集文件失败: {e}")
-            raise
-    
-    def save_collection_metadata(self, collection_data: Dict[str, Any], collection_id: str) -> Collection:
-        """保存合集元数据到数据库"""
-        try:
-            # 创建合集记录，只存储元数据
-            collection = Collection(
-                id=collection_id,
-                project_id=self.project_id,
-                name=collection_data.get('name', ''),
-                description=collection_data.get('description', ''),
-                clip_ids=collection_data.get('clip_ids', []),
-                video_path=self.save_collection_file(collection_data, collection_id),  # 存储相对路径
-                thumbnail_path=collection_data.get('thumbnail_path', ''),
-                tags=collection_data.get('tags', []),
-                collection_metadata=collection_data.get('metadata', {})  # 存储精简元数据
-            )
-            
-            self.db.add(collection)
-            self.db.commit()
-            self.db.refresh(collection)
-            
-            logger.info(f"合集元数据已保存到数据库: {collection_id}")
-            return collection
-            
-        except Exception as e:
-            logger.error(f"保存合集元数据失败: {e}")
-            self.db.rollback()
-            raise
-    
     # ==================== 处理中间文件管理 ====================
     
     def save_processing_metadata(self, metadata: Dict[str, Any], step: str) -> str:
@@ -217,21 +164,11 @@ class OptimizedStorageService:
     def get_project_clips(self) -> List[Clip]:
         """获取项目的所有切片（从数据库）"""
         return self.db.query(Clip).filter(Clip.project_id == self.project_id).all()
-    
-    def get_project_collections(self) -> List[Collection]:
-        """获取项目的所有合集（从数据库）"""
-        return self.db.query(Collection).filter(Collection.project_id == self.project_id).all()
-    
+
     def get_clip_file_path(self, clip: Clip) -> Path:
         """获取切片的完整文件路径"""
         if clip.video_path:
             return self.data_dir / clip.video_path
-        return None
-    
-    def get_collection_file_path(self, collection: Collection) -> Path:
-        """获取合集的完整文件路径"""
-        if collection.video_path:
-            return self.data_dir / collection.video_path
         return None
     
     # ==================== 清理方法 ====================
@@ -303,16 +240,6 @@ class OptimizedStorageService:
                             shutil.copy2(clip_file, target_path)
                             migrated_files.append(f"projects/{self.project_id}/output/clips/{clip_file.name}")
                 
-                # 迁移合集文件
-                collections_dir = old_project_dir / "output" / "collections"
-                if collections_dir.exists():
-                    for collection_file in collections_dir.iterdir():
-                        if collection_file.is_file():
-                            target_path = self.project_dir / "output" / "collections" / collection_file.name
-                            target_path.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(collection_file, target_path)
-                            migrated_files.append(f"projects/{self.project_id}/output/collections/{collection_file.name}")
-            
             logger.info(f"数据迁移完成: {len(migrated_files)} 个文件, {len(migrated_metadata)} 个元数据")
             
             return {

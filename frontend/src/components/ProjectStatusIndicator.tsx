@@ -26,8 +26,7 @@ const ProjectStatusIndicator: React.FC<ProjectStatusIndicatorProps> = ({
         2: '时间轴生成',
         3: '片段评分',
         4: '标题生成',
-        5: '主题聚类',
-        6: '视频生成'
+        5: '视频生成'
       }
       return stepNames[project.current_step as keyof typeof stepNames] || '处理中'
     }

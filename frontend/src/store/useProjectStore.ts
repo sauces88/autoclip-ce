@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { projectApi } from '../services/api'
 
 export interface Clip {
   id: string
@@ -13,17 +12,6 @@ export interface Clip {
   content: string[]
   chunk_index?: number  // 添加缺失字段
   burn_status?: string  // none | burning | done | failed
-}
-
-export interface Collection {
-  id: string
-  collection_title: string
-  collection_summary: string
-  clip_ids: string[]
-  collection_type?: string // "ai_recommended" or "manual"
-  created_at?: string
-  project_id?: string
-  thumbnail_path?: string
 }
 
 // 项目状态类型定义，与后端保持一致
@@ -48,14 +36,12 @@ export interface Project {
   updated_at: string
   completed_at?: string
   total_clips?: number
-  total_collections?: number
   total_tasks?: number
   // 前端特有字段
   video_path?: string
   video_category?: string
   thumbnail?: string
   clips?: Clip[]
-  collections?: Collection[]
   current_step?: number
   total_steps?: number
   error_message?: string
@@ -78,12 +64,6 @@ interface ProjectStore {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   updateClip: (projectId: string, clipId: string, updates: Partial<Clip>) => void
-  updateCollection: (projectId: string, collectionId: string, updates: Partial<Collection>) => void
-  addCollection: (projectId: string, collection: Collection) => void
-  deleteCollection: (projectId: string, collectionId: string) => void
-  removeClipFromCollection: (projectId: string, collectionId: string, clipId: string) => void
-  reorderCollectionClips: (projectId: string, collectionId: string, newClipIds: string[]) => Promise<void>
-  addClipToCollection: (projectId: string, collectionId: string, clipIds: string[]) => Promise<void>
   setDragging: (isDragging: boolean) => void
 }
 
@@ -149,300 +129,5 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       : state.currentProject
   })),
 
-  updateCollection: (projectId, collectionId, updates) => set((state) => ({
-    projects: state.projects.map(p =>
-      p.id === projectId
-        ? { ...p, collections: (p.collections || []).map(c => c.id === collectionId ? { ...c, ...updates } : c) }
-        : p
-    ),
-    currentProject: state.currentProject?.id === projectId
-      ? {
-          ...state.currentProject,
-          collections: (state.currentProject.collections || []).map(c => c.id === collectionId ? { ...c, ...updates } : c)
-        }
-      : state.currentProject
-  })),
-
-  addCollection: (projectId: string, collection: Collection) => {
-    set((state) => ({
-      projects: state.projects.map(project =>
-        project.id === projectId
-          ? {
-              ...project,
-              collections: [...(project.collections || []), collection]
-            }
-          : project
-      ),
-      currentProject: state.currentProject?.id === projectId
-        ? {
-            ...state.currentProject,
-            collections: [...(state.currentProject.collections || []), collection]
-          }
-        : state.currentProject
-    }))
-  },
-
-  deleteCollection: (projectId: string, collectionId: string) => {
-    set((state) => ({
-      projects: state.projects.map(project =>
-        project.id === projectId
-          ? {
-              ...project,
-              collections: project.collections?.filter(c => c.id !== collectionId) || []
-            }
-          : project
-      ),
-      currentProject: state.currentProject?.id === projectId
-        ? {
-            ...state.currentProject,
-            collections: state.currentProject.collections?.filter(c => c.id !== collectionId) || []
-          }
-        : state.currentProject
-    }))
-  },
-
-  removeClipFromCollection: async (projectId: string, collectionId: string, clipId: string) => {
-    const state = get()
-    const project = state.projects.find(p => p.id === projectId)
-    const collection = project?.collections?.find(c => c.id === collectionId)
-
-    if (!collection) {
-      throw new Error('Collection not found')
-    }
-
-    const originalClipIds = [...collection.clip_ids]
-    const updatedClipIds = collection.clip_ids.filter(id => id !== clipId)
-
-    // 检查是否真的有变化
-    if (originalClipIds.length === updatedClipIds.length) {
-      console.log('Clip not found in collection, skipping update')
-      return
-    }
-
-    // 乐观更新：立即更新前端状态
-    const updateState = (clipIds: string[]) => {
-      set((state) => ({
-        projects: state.projects.map(project =>
-          project.id === projectId
-            ? {
-                ...project,
-                collections: project.collections?.map(collection =>
-                  collection.id === collectionId
-                    ? {
-                        ...collection,
-                        clip_ids: clipIds
-                      }
-                    : collection
-                ) || []
-              }
-            : project
-        ),
-        currentProject: state.currentProject?.id === projectId
-          ? {
-              ...state.currentProject,
-              collections: state.currentProject.collections?.map(collection =>
-                collection.id === collectionId
-                  ? {
-                      ...collection,
-                      clip_ids: clipIds
-                    }
-                  : collection
-              ) || []
-            }
-          : state.currentProject,
-        lastEditTimestamp: Date.now()
-      }))
-    }
-
-    // 立即应用更新
-    updateState(updatedClipIds)
-
-    // 调用后端API
-    try {
-      console.log('Removing clip from collection:', { projectId, collectionId, clipId })
-      await projectApi.updateCollection(projectId, collectionId, { clip_ids: updatedClipIds })
-      console.log('Clip removed successfully')
-    } catch (error) {
-      console.error('Failed to remove clip from collection, rolling back:', error)
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        status: (error as any)?.response?.status,
-        statusText: (error as any)?.response?.statusText,
-        data: (error as any)?.response?.data
-      })
-      // 回滚到原始状态
-      updateState(originalClipIds)
-      throw error
-    }
-  },
-
-  setDragging: (isDragging) => set({ isDragging }),
-
-  reorderCollectionClips: async (projectId: string, collectionId: string, newClipIds: string[]) => {
-    console.log('Starting reorderCollectionClips:', { projectId, collectionId, newClipIds })
-
-    // 获取原始状态
-    const state = get()
-    console.log('Current state projects:', state.projects.map(p => ({ id: p.id, collectionsCount: p.collections?.length || 0 })))
-    console.log('Current state currentProject:', state.currentProject ? { id: state.currentProject.id, collectionsCount: state.currentProject.collections?.length || 0 } : null)
-
-    // 优先从currentProject中查找，如果找不到再从projects数组中查找
-    let originalProject = state.currentProject?.id === projectId ? state.currentProject : null
-    let originalCollection = originalProject?.collections?.find(c => c.id === collectionId)
-
-    // 如果currentProject中没有找到，尝试从projects数组中查找
-    if (!originalCollection) {
-      const projectFromArray = state.projects.find(p => p.id === projectId)
-      if (projectFromArray) {
-        originalProject = projectFromArray
-        originalCollection = originalProject.collections?.find(c => c.id === collectionId)
-      }
-    }
-
-    console.log('Found project:', originalProject ? { id: originalProject.id, collectionsCount: originalProject.collections?.length || 0 } : null)
-
-    if (originalProject?.collections) {
-      console.log('Project collections:', originalProject.collections.map(c => ({ id: c.id, title: c.collection_title })))
-    }
-
-    console.log('Found collection:', originalCollection ? { id: originalCollection.id, title: originalCollection.collection_title } : null)
-
-    if (!originalCollection) {
-      console.error('Collection not found in store. Available collections:',
-        originalProject?.collections?.map(c => c.id) || [])
-      throw new Error('Collection not found')
-    }
-
-    const originalClipIds = [...originalCollection.clip_ids]
-
-    // 检查是否真的有变化
-    if (JSON.stringify(originalClipIds) === JSON.stringify(newClipIds)) {
-      console.log('No changes detected, skipping update')
-      return
-    }
-
-    // 记录编辑时间戳
-    const now = Date.now()
-
-    // 乐观更新：立即更新前端状态
-    const updateState = (clipIds: string[]) => {
-      set((state) => ({
-        projects: state.projects.map(project =>
-          project.id === projectId
-            ? {
-                ...project,
-                collections: project.collections?.map(collection =>
-                  collection.id === collectionId
-                    ? { ...collection, clip_ids: clipIds }
-                    : collection
-                ) || []
-              }
-            : project
-        ),
-        currentProject: state.currentProject?.id === projectId
-          ? {
-              ...state.currentProject,
-              collections: state.currentProject.collections?.map(collection =>
-                collection.id === collectionId
-                  ? { ...collection, clip_ids: clipIds }
-                  : collection
-              ) || []
-            }
-          : state.currentProject,
-        lastEditTimestamp: now
-      }))
-    }
-
-    // 立即应用新顺序
-    updateState(newClipIds)
-
-    // 调用后端API
-    try {
-      console.log('Calling backend API for reorder...')
-      await projectApi.reorderCollectionClips(projectId, collectionId, newClipIds)
-      console.log('Backend API call successful')
-    } catch (error) {
-      console.error('Backend API call failed:', error)
-      // 回滚到原始状态
-      updateState(originalClipIds)
-      throw error
-    }
-  },
-
-  addClipToCollection: async (projectId: string, collectionId: string, clipIds: string[]) => {
-    console.log('Starting addClipToCollection:', { projectId, collectionId, clipIds })
-
-    // 获取原始状态
-    const state = get()
-
-    // 优先从currentProject中查找，如果找不到再从projects数组中查找
-    let originalProject = state.currentProject?.id === projectId ? state.currentProject : null
-    let originalCollection = originalProject?.collections?.find(c => c.id === collectionId)
-
-    // 如果currentProject中没有找到，尝试从projects数组中查找
-    if (!originalCollection) {
-      const projectFromArray = state.projects.find(p => p.id === projectId)
-      if (projectFromArray) {
-        originalProject = projectFromArray
-        originalCollection = originalProject.collections?.find(c => c.id === collectionId)
-      }
-    }
-
-    if (!originalCollection) {
-      throw new Error('Collection not found')
-    }
-
-    const originalClipIds = [...originalCollection.clip_ids]
-    const updatedClipIds = [...originalClipIds, ...clipIds.filter(id => !originalClipIds.includes(id))]
-
-    // 检查是否真的有变化
-    if (originalClipIds.length === updatedClipIds.length) {
-      console.log('No new clips to add, skipping update')
-      return
-    }
-
-    // 乐观更新：立即更新前端状态
-    const updateState = (clipIds: string[]) => {
-      set((state) => ({
-        projects: state.projects.map(project =>
-          project.id === projectId
-            ? {
-                ...project,
-                collections: project.collections?.map(collection =>
-                  collection.id === collectionId
-                    ? { ...collection, clip_ids: clipIds }
-                    : collection
-                ) || []
-              }
-            : project
-        ),
-        currentProject: state.currentProject?.id === projectId
-          ? {
-              ...state.currentProject,
-              collections: state.currentProject.collections?.map(collection =>
-                collection.id === collectionId
-                  ? { ...collection, clip_ids: clipIds }
-                  : collection
-              ) || []
-            }
-          : state.currentProject,
-        lastEditTimestamp: Date.now()
-      }))
-    }
-
-    // 立即应用更新
-    updateState(updatedClipIds)
-
-    // 调用后端API
-    try {
-      console.log('Adding clips to collection:', { projectId, collectionId, clipIds })
-      await projectApi.updateCollection(projectId, collectionId, { clip_ids: updatedClipIds })
-      console.log('Clips added to collection successfully')
-    } catch (error) {
-      console.error('Failed to add clips to collection, rolling back:', error)
-      // 回滚到原始状态
-      updateState(originalClipIds)
-      throw error
-    }
-  }
+  setDragging: (isDragging) => set({ isDragging })
 }))

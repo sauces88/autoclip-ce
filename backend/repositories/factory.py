@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from ..repositories.base import BaseRepository
 from ..repositories.project_repository import ProjectRepository
 from ..repositories.clip_repository import ClipRepository
-from ..repositories.collection_repository import CollectionRepository
 from ..repositories.task_repository import TaskRepository
 
 class RepositoryFactory:
@@ -36,12 +35,6 @@ class RepositoryFactory:
             self._repositories["clip"] = ClipRepository(self.db)
         return self._repositories["clip"]
     
-    def get_collection_repository(self) -> CollectionRepository:
-        """获取合集Repository"""
-        if "collection" not in self._repositories:
-            self._repositories["collection"] = CollectionRepository(self.db)
-        return self._repositories["collection"]
-    
     def get_task_repository(self) -> TaskRepository:
         """获取任务Repository"""
         if "task" not in self._repositories:
@@ -61,7 +54,6 @@ class RepositoryFactory:
         repository_map = {
             "project": self.get_project_repository,
             "clip": self.get_clip_repository,
-            "collection": self.get_collection_repository,
             "task": self.get_task_repository
         }
         
@@ -123,18 +115,6 @@ def get_clip_repository(db: Session) -> ClipRepository:
         切片Repository实例
     """
     return get_repository_factory(db).get_clip_repository()
-
-def get_collection_repository(db: Session) -> CollectionRepository:
-    """
-    获取合集Repository
-    
-    Args:
-        db: 数据库会话
-        
-    Returns:
-        合集Repository实例
-    """
-    return get_repository_factory(db).get_collection_repository()
 
 def get_task_repository(db: Session) -> TaskRepository:
     """

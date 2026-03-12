@@ -410,74 +410,6 @@ class ProjectManager:
         except Exception as e:
             raise FileIOError(f"读取切片数据失败: {e}")
     
-    def save_collection(self, project_id: str, collection_data: Dict[str, Any]):
-        """
-        保存合集信息
-        
-        Args:
-            project_id: 项目ID
-            collection_data: 合集数据
-        """
-        if not self.validate_project_exists(project_id):
-            raise FileIOError(f"项目不存在: {project_id}")
-        
-        paths = self.get_project_paths(project_id)
-        metadata_dir = paths["metadata_dir"]
-        
-        # 确保metadata目录存在
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 读取现有合集数据
-        collections_file = metadata_dir / "collections_metadata.json"
-        collections_data = []
-        
-        if collections_file.exists():
-            try:
-                with open(collections_file, 'r', encoding='utf-8') as f:
-                    collections_data = json.load(f)
-            except Exception:
-                collections_data = []
-        
-        # 添加新合集
-        collection_data["created_at"] = datetime.now().isoformat()
-        collections_data.append(collection_data)
-        
-        # 保存合集数据
-        try:
-            with open(collections_file, 'w', encoding='utf-8') as f:
-                json.dump(collections_data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"合集已保存到项目 {project_id}")
-            
-        except Exception as e:
-            raise FileIOError(f"保存合集数据失败: {e}")
-    
-    def get_collections(self, project_id: str) -> List[Dict[str, Any]]:
-        """
-        获取项目所有合集
-        
-        Args:
-            project_id: 项目ID
-            
-        Returns:
-            合集列表
-        """
-        if not self.validate_project_exists(project_id):
-            raise FileIOError(f"项目不存在: {project_id}")
-        
-        paths = self.get_project_paths(project_id)
-        metadata_dir = paths["metadata_dir"]
-        collections_file = metadata_dir / "collections_metadata.json"
-        
-        if not collections_file.exists():
-            return []
-        
-        try:
-            with open(collections_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            raise FileIOError(f"读取合集数据失败: {e}")
-    
     def list_projects(self) -> List[Dict[str, Any]]:
         """
         列出所有项目
@@ -544,13 +476,11 @@ class ProjectManager:
         metadata = self.get_project_metadata(project_id)
         validation = self.validate_input_files(project_id)
         clips = self.get_clips(project_id)
-        collections = self.get_collections(project_id)
-        
+
         return {
             "project_info": metadata,
             "file_validation": validation,
             "clips_count": len(clips),
-            "collections_count": len(collections),
             "processing_progress": {
                 "current_step": metadata.get("current_step", 0),
                 "total_steps": metadata.get("total_steps", 6),

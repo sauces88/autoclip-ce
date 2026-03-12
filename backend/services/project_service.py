@@ -14,7 +14,6 @@ from ..repositories.project_repository import ProjectRepository
 from ..models.project import Project
 from ..models.task import Task
 from ..models.clip import Clip
-from ..models.collection import Collection
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectListResponse, ProjectFilter
 from ..schemas.base import PaginationParams, PaginationResponse
 from ..schemas.project import ProjectType, ProjectStatus
@@ -75,11 +74,9 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
         
         # Get actual statistics from database
         from ..models.clip import Clip
-        from ..models.collection import Collection
         from ..models.task import Task
-        
+
         total_clips = self.db.query(Clip).filter(Clip.project_id == project_id).count()
-        total_collections = self.db.query(Collection).filter(Collection.project_id == project_id).count()
         total_tasks = self.db.query(Task).filter(Task.project_id == project_id).count()
         
         # Convert to response schema
@@ -98,10 +95,9 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
             updated_at=self._convert_utc_to_local(getattr(project, 'updated_at', None)),
             completed_at=self._convert_utc_to_local(getattr(project, 'completed_at', None)),
             total_clips=total_clips,
-            total_collections=total_collections,
             total_tasks=total_tasks
         )
-    
+
     def get_projects_paginated(
         self, 
         pagination: PaginationParams,
@@ -121,12 +117,10 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
         for project in items:
             # Get actual statistics for each project
             from ..models.clip import Clip
-            from ..models.collection import Collection
             from ..models.task import Task
-            
+
             project_id = str(project.id)
             total_clips = self.db.query(Clip).filter(Clip.project_id == project_id).count()
-            total_collections = self.db.query(Collection).filter(Collection.project_id == project_id).count()
             total_tasks = self.db.query(Task).filter(Task.project_id == project_id).count()
             
             project_responses.append(ProjectResponse(
@@ -144,7 +138,6 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
                 updated_at=self._convert_utc_to_local(getattr(project, 'updated_at', None)),
                 completed_at=self._convert_utc_to_local(getattr(project, 'completed_at', None)),
                 total_clips=total_clips,
-                total_collections=total_collections,
                 total_tasks=total_tasks
             ))
         
@@ -270,13 +263,7 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
                     self.db.query(Clip).filter(Clip.project_id == project_id).delete()
                     logger.info(f"删除项目 {project_id} 的 {clip_count} 个切片")
                 
-                # 3. 删除相关合集
-                collection_count = self.db.query(Collection).filter(Collection.project_id == project_id).count()
-                if collection_count > 0:
-                    self.db.query(Collection).filter(Collection.project_id == project_id).delete()
-                    logger.info(f"删除项目 {project_id} 的 {collection_count} 个合集")
-                
-                # 4. 删除项目记录
+                # 3. 删除项目记录
                 self.db.query(Project).filter(Project.id == project_id).delete()
                 logger.info(f"删除项目 {project_id} 记录")
                 
@@ -323,8 +310,6 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
             from ..core.path_utils import get_data_directory
             data_dir = get_data_directory()
             global_clips_dir = data_dir / "output" / "clips"
-            global_collections_dir = data_dir / "output" / "collections"
-            
             # 删除全局输出目录中属于该项目的切片文件
             if global_clips_dir.exists():
                 for clip_file in global_clips_dir.glob(f"*_{project_id}*"):
@@ -333,15 +318,6 @@ class ProjectService(BaseService[Project, ProjectCreate, ProjectUpdate, ProjectR
                         logger.info(f"删除全局切片文件: {clip_file}")
                     except Exception as e:
                         logger.warning(f"删除全局切片文件失败 {clip_file}: {e}")
-            
-            # 删除全局输出目录中属于该项目的合集文件
-            if global_collections_dir.exists():
-                for collection_file in global_collections_dir.glob(f"*_{project_id}*"):
-                    try:
-                        collection_file.unlink()
-                        logger.info(f"删除全局合集文件: {collection_file}")
-                    except Exception as e:
-                        logger.warning(f"删除全局合集文件失败 {collection_file}: {e}")
             
         except Exception as e:
             logger.error(f"删除项目文件时发生错误: {str(e)}")

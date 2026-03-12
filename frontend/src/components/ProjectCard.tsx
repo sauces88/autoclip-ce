@@ -617,7 +617,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
               </div>
             </div>
           ) : (
-            // 其他状态：显示状态块 + 切片数 + 合集数
+            // 其他状态：显示状态块 + 切片数
             <div style={{
               display: 'flex',
               gap: '6px',
@@ -656,23 +656,6 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                 </div>
               </div>
 
-              {/* 合集数量 - 减小宽度 */}
-              <div style={{
-                background: 'rgba(118, 75, 162, 0.15)',
-                border: '1px solid rgba(118, 75, 162, 0.3)',
-                borderRadius: '3px',
-                padding: '3px 4px',
-                textAlign: 'center',
-                minWidth: '50px',
-                flex: 0.8
-              }}>
-                <div style={{ color: '#764ba2', fontSize: '11px', fontWeight: 600, lineHeight: '12px' }}>
-                  {project.total_collections || 0}
-                </div>
-                <div style={{ color: '#999999', fontSize: '8px', lineHeight: '9px' }}>
-                  合集
-                </div>
-              </div>
             </div>
           )}
 

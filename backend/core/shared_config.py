@@ -85,7 +85,6 @@ INPUT_TXT = INPUT_DIR / "input.txt"
 # 输出目录
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 CLIPS_DIR = OUTPUT_DIR / "clips"
-COLLECTIONS_DIR = OUTPUT_DIR / "collections"
 METADATA_DIR = OUTPUT_DIR / "metadata"
 
 # Prompt文件路径
@@ -95,8 +94,6 @@ PROMPT_FILES = {
     "timeline": PROMPT_DIR / "时间点.txt", 
     "recommendation": PROMPT_DIR / "推荐理由.txt",
     "title": PROMPT_DIR / "标题生成.txt",
-    "clustering": PROMPT_DIR / "主题聚类.txt",
-    "collection_title": PROMPT_DIR / "collection_title.txt"
 }
 
 # API配置
@@ -112,8 +109,6 @@ SPEECH_RECOGNITION_TIMEOUT = int(os.getenv("SPEECH_RECOGNITION_TIMEOUT", "1000")
 # 处理参数
 CHUNK_SIZE = 5000  # 文本分块大小
 MIN_SCORE_THRESHOLD = 0.7  # 最低评分阈值
-MAX_CLIPS_PER_COLLECTION = 5  # 每个合集最大切片数
-
 # 新增：话题提取控制参数
 MIN_TOPIC_DURATION_MINUTES = 2  # 话题最小时长（分钟）
 MAX_TOPIC_DURATION_MINUTES = 12  # 话题最大时长（分钟）
@@ -122,7 +117,7 @@ MIN_TOPICS_PER_CHUNK = 3  # 每个文本块最少话题数
 MAX_TOPICS_PER_CHUNK = 8  # 每个文本块最多话题数
 
 # 确保输出目录存在
-for dir_path in [CLIPS_DIR, COLLECTIONS_DIR, METADATA_DIR]:
+for dir_path in [CLIPS_DIR, METADATA_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
 
 # 新的配置管理系统
@@ -132,7 +127,6 @@ class Settings(BaseModel):
     model_name: str = "qwen-plus"
     chunk_size: int = 5000
     min_score_threshold: float = 0.7
-    max_clips_per_collection: int = 5
     max_retries: int = 3
     timeout_seconds: int = 30
     # 新增话题提取控制参数
@@ -179,7 +173,6 @@ class ProcessingConfig:
     """处理配置"""
     chunk_size: int = 5000
     min_score_threshold: float = 0.7
-    max_clips_per_collection: int = 5
     max_retries: int = 3
     timeout_seconds: int = 30
 
@@ -241,8 +234,7 @@ class ConfigManager:
             "大纲.txt": "请分析以下视频内容，提取主要话题和结构：\n\n{content}",
             "时间点.txt": "请为以下话题定位具体的时间区间：\n\n{content}",
             "推荐理由.txt": "请评估以下内容的质量和推荐度：\n\n{content}",
-            "标题生成.txt": "请为以下内容生成吸引人的标题：\n\n{content}",
-            "主题聚类.txt": "请将以下话题按主题进行聚合：\n\n{content}"
+            "标题生成.txt": "请为以下内容生成吸引人的标题：\n\n{content}"
         }
         
         for filename, content in default_prompts.items():
@@ -266,7 +258,6 @@ class ConfigManager:
         return ProcessingConfig(
             chunk_size=self.settings.chunk_size,
             min_score_threshold=self.settings.min_score_threshold,
-            max_clips_per_collection=self.settings.max_clips_per_collection,
             max_retries=self.settings.max_retries,
             timeout_seconds=self.settings.timeout_seconds
         )
@@ -305,7 +296,6 @@ class ConfigManager:
             "input_dir": project_base / "raw",  # 修改为raw目录
             "output_dir": project_base / "output",
             "clips_dir": project_base / "output" / "clips",
-            "collections_dir": project_base / "output" / "collections",
             "metadata_dir": project_base / "output" / "metadata",
             "logs_dir": project_base / "logs",
             "temp_dir": project_base / "temp"
@@ -348,7 +338,6 @@ class ConfigManager:
             "processing_config": {
                 "chunk_size": self.settings.chunk_size,
                 "min_score_threshold": self.settings.min_score_threshold,
-                "max_clips_per_collection": self.settings.max_clips_per_collection,
                 "max_retries": self.settings.max_retries,
                 "timeout_seconds": self.settings.timeout_seconds
             },
@@ -406,7 +395,6 @@ def get_legacy_config() -> Dict[str, Any]:
         'INPUT_TXT': INPUT_TXT,
         'OUTPUT_DIR': OUTPUT_DIR,
         'CLIPS_DIR': CLIPS_DIR,
-        'COLLECTIONS_DIR': COLLECTIONS_DIR,
         'METADATA_DIR': METADATA_DIR,
         'PROMPT_DIR': PROMPT_DIR,
         'PROMPT_FILES': PROMPT_FILES,
@@ -414,7 +402,6 @@ def get_legacy_config() -> Dict[str, Any]:
         'MODEL_NAME': MODEL_NAME,
         'CHUNK_SIZE': CHUNK_SIZE,
         'MIN_SCORE_THRESHOLD': MIN_SCORE_THRESHOLD,
-        'MAX_CLIPS_PER_COLLECTION': MAX_CLIPS_PER_COLLECTION,
         'MIN_TOPIC_DURATION_MINUTES': MIN_TOPIC_DURATION_MINUTES,
         'MAX_TOPIC_DURATION_MINUTES': MAX_TOPIC_DURATION_MINUTES,
         'TARGET_TOPIC_DURATION_MINUTES': TARGET_TOPIC_DURATION_MINUTES,

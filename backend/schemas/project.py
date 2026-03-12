@@ -72,12 +72,10 @@ class ProjectResponse(BaseSchema):
     
     # Statistics
     total_clips: int = Field(default=0, description="Total number of clips")
-    total_collections: int = Field(default=0, description="Total number of collections")
     total_tasks: int = Field(default=0, description="Total number of tasks")
-    
+
     # Optional detailed data
     clips: Optional[List[dict]] = Field(default=None, description="List of clips (when requested)")
-    collections: Optional[List[dict]] = Field(default=None, description="List of collections (when requested)")
 
 
 class ProjectListResponse(BaseSchema):

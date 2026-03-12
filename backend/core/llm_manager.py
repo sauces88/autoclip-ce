@@ -44,8 +44,7 @@ class LLMManager:
             "siliconflow_api_key": "",
             "model_name": "qwen-plus",
             "chunk_size": 5000,
-            "min_score_threshold": 0.7,
-            "max_clips_per_collection": 5
+            "min_score_threshold": 0.7
         }
         
         if self.settings_file.exists():

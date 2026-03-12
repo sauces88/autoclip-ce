@@ -44,6 +44,124 @@ _FONT_CANDIDATES = [
 SEEDREAM_API_URL = os.getenv("VOLCENGINE_SEEDREAM_API_URL", "https://ark.cn-beijing.volces.com/api/v3/images/generations")
 SEEDREAM_MODEL = os.getenv("VOLCENGINE_SEEDREAM_MODEL", "doubao-seedream-5-0-260128")
 
+# cover_prompt.txt 模板路径
+_COVER_PROMPT_TEMPLATE_PATH = Path(__file__).parent.parent / "prompt" / "cover_prompt.txt"
+
+
+def _generate_cover_prompt_via_llm(
+    title: str,
+    content_summary: str = "",
+    width: int = 0,
+    height: int = 0,
+    cover_title: str = "",
+    cover_subtitle: str = "",
+) -> Optional[Dict[str, Any]]:
+    """
+    用 LLM 生成 Seedream prompt + 小红书发帖文案。
+
+    Args:
+        title: clip 原始标题
+        content_summary: 内容摘要
+        width: 视频/截图宽度
+        height: 视频/截图高度
+        cover_title: 封面上要渲染的大标题（前端 input 传入）
+        cover_subtitle: 封面上要渲染的副标题（前端 input 传入）
+
+    Returns:
+        dict: {title, content_polished, tags, seedream_prompt} 或 None（失败时）
+    """
+    try:
+        if not _COVER_PROMPT_TEMPLATE_PATH.exists():
+            logger.warning(f"cover_prompt.txt 不存在: {_COVER_PROMPT_TEMPLATE_PATH}")
+            return None
+
+        template = _COVER_PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
+
+        # 封面标题/副标题默认用 clip 原始数据
+        if not cover_title:
+            cover_title = title
+        if not cover_subtitle:
+            cover_subtitle = content_summary[:50] if content_summary else ""
+
+        # 判断画面比例
+        if width > 0 and height > 0:
+            ratio = width / height
+            if ratio > 1.2:
+                aspect_ratio = f"横版 ({width}x{height})"
+            elif ratio < 0.8:
+                aspect_ratio = f"竖版 ({width}x{height})"
+            else:
+                aspect_ratio = f"近正方形 ({width}x{height})"
+        else:
+            aspect_ratio = "未知比例"
+
+        # 替换模板变量
+        prompt = (
+            template
+            .replace("{cover_title}", cover_title)
+            .replace("{cover_subtitle}", cover_subtitle)
+            .replace("{title}", title)
+            .replace("{content_summary}", content_summary or "无")
+            .replace("{aspect_ratio}", aspect_ratio)
+        )
+
+        from backend.core.llm_manager import get_llm_manager
+        llm = get_llm_manager()
+
+        def _safe_log(msg: str):
+            """强制 UTF-8 输出，绕过 Windows GBK 限制"""
+            import sys
+            for h in logging.root.handlers + logger.handlers:
+                if hasattr(h, 'stream') and hasattr(h.stream, 'reconfigure'):
+                    try:
+                        h.stream.reconfigure(encoding='utf-8')
+                    except Exception:
+                        pass
+            logger.info(msg)
+
+        _safe_log(f"{'='*60}")
+        _safe_log(f"[LLM cover] prompt (len={len(prompt)}):")
+        _safe_log(prompt)
+        _safe_log(f"{'='*60}")
+
+        raw_response = llm.call_with_retry(prompt, max_retries=2)
+
+        _safe_log(f"[LLM cover] raw response:")
+        _safe_log(raw_response or "(empty)")
+        _safe_log(f"{'='*60}")
+
+        if not raw_response:
+            logger.warning("LLM 返回空响应")
+            return None
+
+        result = llm.parse_json_response(raw_response)
+
+        _safe_log(f"[LLM cover] parsed JSON:")
+        _safe_log(json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, dict) else str(result))
+
+        # 校验必要字段
+        if not isinstance(result, dict):
+            logger.warning(f"LLM 返回非 dict: {type(result)}")
+            return None
+
+        required_keys = {"title", "content_polished", "tags", "seedream_prompt"}
+        if not required_keys.issubset(result.keys()):
+            missing = required_keys - set(result.keys())
+            logger.warning(f"LLM 返回缺少字段: {missing}")
+            return None
+
+        # 确保 tags 是列表
+        if isinstance(result["tags"], str):
+            result["tags"] = [t.strip() for t in result["tags"].split(",") if t.strip()]
+
+        logger.info(f"[LLM 封面文案] 最终结果: title={result['title']}, tags={result['tags']}")
+        logger.info(f"[LLM 封面文案] seedream_prompt: {result['seedream_prompt']}")
+        return result
+
+    except Exception as e:
+        logger.warning(f"LLM 生成封面文案失败，将使用默认 prompt: {e}")
+        return None
+
 
 def _parse_time_value(val) -> float:
     """将 start_time/end_time 解析为浮点秒数"""
@@ -349,6 +467,7 @@ def _generate_cover_with_seedream(
     title: str,
     content_summary: str = "",
     size: str = "2K",
+    custom_prompt: Optional[str] = None,
 ) -> str:
     """
     调用火山引擎 Seedream API 生成封面图（图生图）。
@@ -358,6 +477,7 @@ def _generate_cover_with_seedream(
         title: clip 标题
         content_summary: 内容摘要
         size: 图片尺寸（WxH 像素值或 1K/2K/4K）
+        custom_prompt: 自定义 prompt（由 LLM 生成），为 None 时使用默认 prompt
 
     Returns:
         生成图片的 URL
@@ -372,9 +492,28 @@ def _generate_cover_with_seedream(
             "请在 .env 中设置 VOLCENGINE_SEEDREAM_API_KEY"
         )
 
-    prompt = _build_cover_prompt(title, content_summary)
+    prompt = custom_prompt if custom_prompt else _build_cover_prompt(title, content_summary)
 
-    logger.info(f"调用 Seedream 生成封面: {title[:50]}... size={size}")
+    seedream_params = {
+        "model": SEEDREAM_MODEL,
+        "prompt": prompt,
+        "image": screenshot_url,
+        "sequential_image_generation": "disabled",
+        "response_format": "url",
+        "size": size,
+        "stream": False,
+        "watermark": False,
+    }
+
+    logger.info(f"{'='*60}")
+    logger.info(f"[Seedream API] 请求参数：")
+    logger.info(f"  API URL: {SEEDREAM_API_URL}")
+    logger.info(f"  model: {SEEDREAM_MODEL}")
+    logger.info(f"  size: {size}")
+    logger.info(f"  image: {screenshot_url}")
+    logger.info(f"  prompt (来源: {'LLM自定义' if custom_prompt else '硬编码默认'}):")
+    logger.info(f"  {prompt}")
+    logger.info(f"{'='*60}")
 
     resp = requests.post(
         SEEDREAM_API_URL,
@@ -589,25 +728,39 @@ class CoverGenerator:
                 vid_w, vid_h = _get_video_dimensions(video_path)
                 size = _pick_seedream_size(vid_w, vid_h)
 
-                # 4. 调用 Seedream 生成封面
-                prompt_used = (
-                    f"标题: {title}, "
-                    f"内容: {content_summary[:100] if content_summary else '无'}"
+                # 4. 用 LLM 生成小红书风格文案 + Seedream prompt
+                llm_result = _generate_cover_prompt_via_llm(
+                    str(title), content_summary, vid_w, vid_h,
+                    cover_title=str(title), cover_subtitle=content_summary[:50] if content_summary else "",
                 )
+
+                if llm_result:
+                    seedream_prompt = llm_result["seedream_prompt"]
+                    xhs_title = llm_result["title"]
+                    xhs_content = llm_result["content_polished"]
+                    xhs_tags = llm_result["tags"]
+                else:
+                    seedream_prompt = None  # 使用默认 prompt
+                    xhs_title = ""
+                    xhs_content = ""
+                    xhs_tags = []
+
+                prompt_used = seedream_prompt or _build_cover_prompt(str(title), content_summary)
+
                 image_url = _generate_cover_with_seedream(
                     screenshot_url=screenshot_url,
                     title=str(title),
                     content_summary=content_summary,
                     size=size,
+                    custom_prompt=seedream_prompt,
                 )
 
-                # 5. 下载并用 PIL 叠加精确文字
+                # 5. 下载 Seedream 生成的封面（文字已由 Seedream 渲染，不再用 PIL 叠字）
                 raw_bytes = _download_image(image_url)
-                final_bytes = _overlay_text_on_cover(raw_bytes, str(title), content_summary)
                 cover_output = self.output_dir / f"{safe_name}_cover.png"
                 cover_output.parent.mkdir(parents=True, exist_ok=True)
-                cover_output.write_bytes(final_bytes)
-                logger.info(f"封面已保存(含PIL文字): {cover_output.name} ({len(final_bytes)} bytes)")
+                cover_output.write_bytes(raw_bytes)
+                logger.info(f"封面已保存: {cover_output.name} ({len(raw_bytes)} bytes)")
 
             clip["cover_path"] = str(cover_output)
             results["covers"].append(str(cover_output))
@@ -618,12 +771,16 @@ class CoverGenerator:
             if sub_video and Path(sub_video).exists():
                 cover_inserted = _prepend_cover_to_video(cover_output, Path(sub_video))
 
-            # 7. 写入 step8 JSON（每个 clip 完成后立即写入）
+            # 7. 写入 step8 JSON（每个 clip 完成后立即写入，含 xhs 字段）
             step8_data["clips"].append({
                 "clip_id": clip_id,
                 "cover_path": str(cover_output),
                 "cover_inserted": cover_inserted,
                 "prompt_used": prompt_used,
+                "xhs_title": xhs_title,
+                "xhs_content": xhs_content,
+                "xhs_tags": xhs_tags,
+                "seedream_prompt": seedream_prompt or prompt_used,
             })
             _save_step8_json(step8_json_path, step8_data)
 

@@ -11,7 +11,6 @@ from backend.pipeline.step1_outline import run_step1_outline
 from backend.pipeline.step2_timeline import run_step2_timeline
 from backend.pipeline.step3_scoring import run_step3_scoring
 from backend.pipeline.step4_title import run_step4_title
-from backend.pipeline.step5_clustering import run_step5_clustering
 from backend.pipeline.step6_video import run_step6_video
 
 logger = logging.getLogger(__name__)
@@ -111,9 +110,7 @@ class SimplePipelineAdapter:
             output_dir.mkdir(parents=True, exist_ok=True)
             # 项目内专属输出子目录
             clips_output_dir = output_dir / "clips"
-            collections_output_dir = output_dir / "collections"
             clips_output_dir.mkdir(parents=True, exist_ok=True)
-            collections_output_dir.mkdir(parents=True, exist_ok=True)
             
             # 阶段1: 素材准备
             emit_progress(self.project_id, "INGEST", "素材准备完成")
@@ -188,42 +185,30 @@ class SimplePipelineAdapter:
                     metadata_dir=str(metadata_dir)
                 )
                 emit_progress(self.project_id, "HIGHLIGHT", "标题生成完成", subpercent=40)
-                
-                # Step 5: 主题聚类
-                logger.info("执行Step 5: 主题聚类")
-                collections = run_step5_clustering(
-                    metadata_dir / "step4_titles.json",
-                    metadata_dir=str(metadata_dir)
-                )
+
                 emit_progress(self.project_id, "HIGHLIGHT", "片段定位完成", subpercent=100)
-                
+
                 # 阶段5: 视频导出
                 emit_progress(self.project_id, "EXPORT", "开始视频导出")
-                
+
                 # Step 6: 视频切割
                 logger.info("执行Step 6: 视频切割")
                 video_result = run_step6_video(
                     metadata_dir / "step4_titles.json",
-                    metadata_dir / "step5_collections.json",
                     input_video_path,
                     output_dir=output_dir,
                     clips_dir=str(clips_output_dir),
-                    collections_dir=str(collections_output_dir),
                     metadata_dir=str(metadata_dir)
                 )
             else:
-                logger.warning("没有大纲数据，跳过标题生成、主题聚类和视频切割")
-                # 创建空的标题和合集文件
+                logger.warning("没有大纲数据，跳过标题生成和视频切割")
+                # 创建空的标题文件
                 titles_file = metadata_dir / "step4_titles.json"
-                collections_file = metadata_dir / "step5_collections.json"
                 import json
                 with open(titles_file, 'w', encoding='utf-8') as f:
                     json.dump([], f, ensure_ascii=False, indent=2)
-                with open(collections_file, 'w', encoding='utf-8') as f:
-                    json.dump([], f, ensure_ascii=False, indent=2)
                 # 初始化空变量
                 titled_clips = []
-                collections = []
                 emit_progress(self.project_id, "HIGHLIGHT", "片段定位完成", subpercent=100)
                 emit_progress(self.project_id, "EXPORT", "开始视频导出")
                 video_result = {"status": "skipped", "message": "没有内容可处理"}
@@ -305,7 +290,6 @@ class SimplePipelineAdapter:
                     "timeline": timeline_data,
                     "scored_clips": scored_clips,
                     "titled_clips": titled_clips,
-                    "collections": collections,
                     "video_result": video_result
                 }
             }

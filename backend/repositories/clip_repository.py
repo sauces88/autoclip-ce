@@ -245,23 +245,6 @@ class ClipRepository(BaseRepository[Clip]):
         """
         return self.update(clip_id, score=score)
     
-    def get_clips_for_collection(self, project_id: str, collection_size: int = 5) -> List[Clip]:
-        """
-        获取适合合集的切片
-        
-        Args:
-            project_id: 项目ID
-            collection_size: 合集大小
-            
-        Returns:
-            切片列表
-        """
-        return self.db.query(self.model).filter(
-            self.model.project_id == project_id,
-            self.model.status == ClipStatus.COMPLETED,
-            self.model.score >= 0.7
-        ).order_by(desc(self.model.score)).limit(collection_size).all()
-    
     def get_clips_by_processing_step(self, project_id: str, step: int) -> List[Clip]:
         """
         根据处理步骤获取切片

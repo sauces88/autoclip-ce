@@ -23,14 +23,13 @@ const PIPELINE_STEPS = [
   { id: 2, name: '时间定位', description: '基于SRT字幕定位话题时间区间' },
   { id: 3, name: '内容评分', description: '多维度评估片段质量与传播潜力' },
   { id: 4, name: '标题生成', description: '为高分片段生成吸引人的标题' },
-  { id: 5, name: '主题聚类', description: '将相关片段聚合为合集推荐' },
-  { id: 6, name: '视频切割', description: '使用FFmpeg生成切片与合集视频' }
+  { id: 5, name: '视频切割', description: '使用FFmpeg生成切片视频' }
 ];
 
 export const InlineProgressBar: React.FC<InlineProgressBarProps> = ({
   projectId,
   currentStep = 0,
-  totalSteps = 6,
+  totalSteps = 5,
   status = 'processing',
   onProgressUpdate
 }) => {

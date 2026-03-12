@@ -19,13 +19,11 @@ from sqlalchemy.orm import Session
 from repositories.factory import (
     get_project_repository,
     get_clip_repository,
-    get_collection_repository,
     get_task_repository
 )
 from backend.core.database import get_db, init_database, reset_database
 from backend.models.project import ProjectStatus, ProjectType
 from backend.models.clip import ClipStatus
-from backend.models.collection import CollectionStatus
 from backend.models.task import TaskStatus, TaskType
 
 class TestRepositoryPattern:
@@ -121,44 +119,6 @@ class TestRepositoryPattern:
         assert len(high_score_clips) == 1
         assert high_score_clips[0].id == clip.id
     
-    def test_collection_repository_operations(self):
-        """测试合集Repository的操作"""
-        db = next(get_db())
-        project_repo = get_project_repository(db)
-        collection_repo = get_collection_repository(db)
-        
-        # 创建项目
-        project = project_repo.create(
-            name="测试项目",
-            project_type=ProjectType.KNOWLEDGE,
-            status=ProjectStatus.PENDING
-        )
-        
-        # 创建合集
-        collection_data = {
-            "project_id": project.id,
-            "name": "测试合集",
-            "description": "这是一个测试合集",
-            "theme": "测试主题",
-            "clips_count": 5,
-            "total_duration": 300,
-            "status": CollectionStatus.COMPLETED
-        }
-        
-        collection = collection_repo.create(**collection_data)
-        assert collection.project_id == project.id
-        assert collection.name == "测试合集"
-        
-        # 测试按项目查询合集
-        project_collections = collection_repo.get_by_project(project.id)
-        assert len(project_collections) == 1
-        assert project_collections[0].id == collection.id
-        
-        # 测试按主题查询合集
-        theme_collections = collection_repo.get_by_theme(project.id, "测试主题")
-        assert len(theme_collections) == 1
-        assert theme_collections[0].id == collection.id
-    
     def test_task_repository_operations(self):
         """测试任务Repository的操作"""
         db = next(get_db())
@@ -207,7 +167,6 @@ class TestRepositoryPattern:
         db = next(get_db())
         project_repo = get_project_repository(db)
         clip_repo = get_clip_repository(db)
-        collection_repo = get_collection_repository(db)
         task_repo = get_task_repository(db)
         
         # 创建项目
@@ -229,17 +188,6 @@ class TestRepositoryPattern:
                 status=ClipStatus.COMPLETED
             )
         
-        # 创建多个合集
-        for i in range(3):
-            collection_repo.create(
-                project_id=project.id,
-                name=f"合集{i+1}",
-                theme=f"主题{i+1}",
-                clips_count=2,
-                total_duration=120,
-                status=CollectionStatus.COMPLETED
-            )
-        
         # 创建多个任务
         for i in range(6):
             task_repo.create(
@@ -259,11 +207,6 @@ class TestRepositoryPattern:
         assert clip_stats["total"] == 5
         assert clip_stats["completed"] == 5
         assert clip_stats["avg_score"] > 0.7
-        
-        # 测试合集统计
-        collection_stats = collection_repo.get_collections_statistics(project.id)
-        assert collection_stats["total"] == 3
-        assert collection_stats["completed"] == 3
         
         # 测试任务统计
         task_stats = task_repo.get_tasks_statistics(project.id)

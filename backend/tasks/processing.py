@@ -258,12 +258,6 @@ def process_single_step(self, project_id: str, step: str, config: Dict[str, Any]
                 )
                 result = processing_service.extract_clips(project_id, config)
                 
-            elif step == "collections":
-                run_async_notification(
-                    notification_service.send_processing_progress(project_id, task_id, 50, "生成合集")
-                )
-                result = processing_service.generate_collections(project_id, config)
-                
             else:
                 raise Exception(f"未知的步骤类型: {step}")
             

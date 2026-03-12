@@ -24,7 +24,6 @@ class ProcessingStep(str, Enum):
     STEP2_TIMELINE = "step2_timeline"
     STEP3_SCORING = "step3_scoring"
     STEP4_TITLE = "step4_title"
-    STEP5_CLUSTERING = "step5_clustering"
     STEP6_VIDEO = "step6_video"
 
 
@@ -42,7 +41,6 @@ class ProcessingParams:
     """处理参数"""
     chunk_size: int = 5000
     min_score_threshold: float = 0.7
-    max_clips_per_collection: int = 5
     min_topic_duration_minutes: int = 2
     max_topic_duration_minutes: int = 12
     target_topic_duration_minutes: int = 5
@@ -121,8 +119,7 @@ class ProjectConfigManager:
             "outline": self.prompt_dir / "大纲.txt",
             "timeline": self.prompt_dir / "时间点.txt",
             "recommendation": self.prompt_dir / "推荐理由.txt",
-            "title": self.prompt_dir / "标题生成.txt",
-            "clustering": self.prompt_dir / "主题聚类.txt"
+            "title": self.prompt_dir / "标题生成.txt"
         }
         
         # 如果配置中指定了自定义prompt路径，使用配置的路径
@@ -187,7 +184,6 @@ class ProjectConfigManager:
         return ProcessingParams(
             chunk_size=params.get("chunk_size", 5000),
             min_score_threshold=params.get("min_score_threshold", 0.7),
-            max_clips_per_collection=params.get("max_clips_per_collection", 5),
             min_topic_duration_minutes=params.get("min_topic_duration_minutes", 2),
             max_topic_duration_minutes=params.get("max_topic_duration_minutes", 12),
             target_topic_duration_minutes=params.get("target_topic_duration_minutes", 5),
@@ -295,7 +291,6 @@ class ProjectConfigManager:
             "processing_params": {
                 "chunk_size": self.get_processing_params().chunk_size,
                 "min_score_threshold": self.get_processing_params().min_score_threshold,
-                "max_clips_per_collection": self.get_processing_params().max_clips_per_collection,
                 "min_topic_duration_minutes": self.get_processing_params().min_topic_duration_minutes,
                 "max_topic_duration_minutes": self.get_processing_params().max_topic_duration_minutes,
                 "target_topic_duration_minutes": self.get_processing_params().target_topic_duration_minutes,

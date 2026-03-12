@@ -54,7 +54,6 @@ class ProcessingConfig(BaseModel):
     """处理配置"""
     chunk_size: int = Field(default=5000, description="文本分块大小")
     min_score_threshold: float = Field(default=0.7, description="最小评分阈值")
-    max_clips_per_collection: int = Field(default=5, description="每个合集最大切片数")
     max_retries: int = Field(default=3, description="最大重试次数")
     timeout_seconds: int = Field(default=30, description="处理超时时间")
     
@@ -300,8 +299,7 @@ class UnifiedConfig(BaseSettings):
             },
             "processing": {
                 "chunk_size": self.processing.chunk_size,
-                "min_score_threshold": self.processing.min_score_threshold,
-                "max_clips_per_collection": self.processing.max_clips_per_collection
+                "min_score_threshold": self.processing.min_score_threshold
             },
             "speech_recognition": {
                 "method": self.speech_recognition.method,

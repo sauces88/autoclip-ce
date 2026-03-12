@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Card, Button, Tooltip, Modal, Input, message } from 'antd'
-import { PlayCircleOutlined, FolderOpenOutlined, ClockCircleOutlined, StarFilled, EditOutlined, EyeOutlined, ReloadOutlined, LoadingOutlined } from '@ant-design/icons'
+import { Card, Button, Tooltip, Modal, Input, Tag, message } from 'antd'
+import { PlayCircleOutlined, FolderOpenOutlined, ClockCircleOutlined, StarFilled, EditOutlined, EyeOutlined, ReloadOutlined, LoadingOutlined, PlusOutlined } from '@ant-design/icons'
 import ReactPlayer from 'react-player'
 import { Clip } from '../store/useProjectStore'
 import SubtitleEditor from './SubtitleEditor'
@@ -39,8 +39,13 @@ const ClipCard: React.FC<ClipCardProps> = ({
     }
     return clip.outline || ''
   })
+  const [xhsTags, setXhsTags] = useState<string[]>([])
+  const [newTagInput, setNewTagInput] = useState('')
+  const [tagInputVisible, setTagInputVisible] = useState(false)
+  const [coverMetaLoaded, setCoverMetaLoaded] = useState(false)
   const [burnStatus, setBurnStatus] = useState<string>(clip.burn_status || 'none')
   const playerRef = useRef<ReactPlayer>(null)
+  const tagInputRef = useRef<any>(null)
 
   // 轮询烧录状态
   useEffect(() => {
@@ -65,6 +70,27 @@ const ClipCard: React.FC<ClipCardProps> = ({
   useEffect(() => {
     if (clip.burn_status) setBurnStatus(clip.burn_status)
   }, [clip.burn_status])
+
+  // 封面弹窗打开时加载 cover-meta
+  useEffect(() => {
+    if (showCoverModal && projectId && !coverMetaLoaded) {
+      fetch(`/api/v1/projects/${projectId}/clips/${clip.id}/cover-meta`)
+        .then(res => res.json())
+        .then(data => {
+          // 只加载标签，coverTitle/coverSubtitle 始终用 clip 原始数据
+          if (data.xhs_tags && data.xhs_tags.length > 0) setXhsTags(data.xhs_tags)
+          setCoverMetaLoaded(true)
+        })
+        .catch(() => { /* ignore */ })
+    }
+  }, [showCoverModal, projectId, clip.id, coverMetaLoaded])
+
+  // 标签输入框聚焦
+  useEffect(() => {
+    if (tagInputVisible && tagInputRef.current) {
+      tagInputRef.current.focus()
+    }
+  }, [tagInputVisible])
 
   // 生成视频缩略图
   useEffect(() => {
@@ -601,12 +627,13 @@ const ClipCard: React.FC<ClipCardProps> = ({
                 const resp = await fetch(`/api/v1/projects/${projectId}/clips/${clip.id}/regenerate-cover`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ cover_title: coverTitle, cover_subtitle: coverSubtitle }),
+                  body: JSON.stringify({ cover_title: coverTitle, cover_subtitle: coverSubtitle, xhs_tags: xhsTags }),
                 })
                 const data = await resp.json()
                 if (data.success) {
                   message.success('封面已重新生成')
                   setCoverUrl(`/api/v1/projects/${projectId}/clips/${clip.id}/cover?t=${Date.now()}`)
+                  setCoverMetaLoaded(false)  // 重新加载 meta
                 } else {
                   message.error(data.detail || '重新生成封面失败')
                 }
@@ -655,6 +682,54 @@ const ClipCard: React.FC<ClipCardProps> = ({
               maxLength={80}
               showCount
             />
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>小红书标签</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+              {xhsTags.map((tag, index) => (
+                <Tag
+                  key={tag}
+                  closable
+                  onClose={() => setXhsTags(xhsTags.filter((_, i) => i !== index))}
+                  style={{ marginRight: 0 }}
+                >
+                  {tag}
+                </Tag>
+              ))}
+              {tagInputVisible ? (
+                <Input
+                  ref={tagInputRef}
+                  size="small"
+                  style={{ width: 100 }}
+                  value={newTagInput}
+                  onChange={e => setNewTagInput(e.target.value)}
+                  onBlur={() => {
+                    if (newTagInput.trim()) {
+                      const tag = newTagInput.trim().startsWith('#') ? newTagInput.trim() : `#${newTagInput.trim()}`
+                      if (!xhsTags.includes(tag)) setXhsTags([...xhsTags, tag])
+                    }
+                    setNewTagInput('')
+                    setTagInputVisible(false)
+                  }}
+                  onPressEnter={() => {
+                    if (newTagInput.trim()) {
+                      const tag = newTagInput.trim().startsWith('#') ? newTagInput.trim() : `#${newTagInput.trim()}`
+                      if (!xhsTags.includes(tag)) setXhsTags([...xhsTags, tag])
+                    }
+                    setNewTagInput('')
+                    setTagInputVisible(false)
+                  }}
+                  placeholder="#标签"
+                />
+              ) : (
+                <Tag
+                  onClick={() => setTagInputVisible(true)}
+                  style={{ borderStyle: 'dashed', cursor: 'pointer' }}
+                >
+                  <PlusOutlined /> 添加标签
+                </Tag>
+              )}
+            </div>
           </div>
         </div>
       </Modal>

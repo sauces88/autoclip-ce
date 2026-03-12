@@ -67,12 +67,6 @@ def get_clips_directory() -> Path:
     clips_dir.mkdir(parents=True, exist_ok=True)
     return clips_dir
 
-def get_collections_directory() -> Path:
-    """获取合集目录"""
-    collections_dir = get_output_directory() / "collections"
-    collections_dir.mkdir(parents=True, exist_ok=True)
-    return collections_dir
-
 def get_metadata_directory() -> Path:
     """获取元数据目录"""
     metadata_dir = get_output_directory() / "metadata"
@@ -114,13 +108,6 @@ def get_clip_file_path(clip_id: str, title: str) -> Path:
     safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
     safe_title = safe_title.replace(' ', '_')
     return get_clips_directory() / f"{clip_id}_{safe_title}.mp4"
-
-def get_collection_file_path(collection_id: str, title: str) -> Path:
-    """获取合集文件路径"""
-    # 清理文件名，移除特殊字符
-    safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-    safe_title = safe_title.replace(' ', '_')
-    return get_collections_directory() / f"{collection_id}_{safe_title}.mp4"
 
 def get_metadata_file_path(project_id: str) -> Path:
     """获取项目元数据文件路径"""

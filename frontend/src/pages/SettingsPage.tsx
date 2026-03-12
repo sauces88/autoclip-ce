@@ -154,8 +154,7 @@ const SettingsPage: React.FC = () => {
                   llm_provider: 'dashscope',
                   model_name: 'qwen-plus',
                   chunk_size: 5000,
-                  min_score_threshold: 0.7,
-                  max_clips_per_collection: 5
+                  min_score_threshold: 0.7
                 }}
               >
                 {/* 当前提供商状态 */}
@@ -287,26 +286,12 @@ const SettingsPage: React.FC = () => {
                       name="min_score_threshold"
                       className="form-item"
                     >
-                      <Input 
-                        type="number" 
-                        step="0.1" 
-                        min="0" 
-                        max="1" 
-                        placeholder="0.7" 
-                        className="settings-input"
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col span={12}>
-                    <Form.Item
-                      label="每个合集最大切片数"
-                      name="max_clips_per_collection"
-                      className="form-item"
-                    >
-                      <Input 
-                        type="number" 
-                        placeholder="5" 
-                        addonAfter="个" 
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="1"
+                        placeholder="0.7"
                         className="settings-input"
                       />
                     </Form.Item>
@@ -349,8 +334,7 @@ const SettingsPage: React.FC = () => {
                   </Title>
                   <Paragraph className="instruction-text">
                     • <Text strong>文本分块大小</Text>：影响处理速度和精度，建议5000字符<br />
-                    • <Text strong>评分阈值</Text>：只有高于此分数的片段才会被保留<br />
-                    • <Text strong>合集切片数</Text>：控制每个主题合集包含的片段数量
+                    • <Text strong>评分阈值</Text>：只有高于此分数的片段才会被保留
                   </Paragraph>
                 </div>
                 

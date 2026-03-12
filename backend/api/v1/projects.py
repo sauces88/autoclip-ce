@@ -155,13 +155,12 @@ async def upload_files(
             "updated_at": project.updated_at,
             "completed_at": project.completed_at,
             "total_clips": 0,
-            "total_collections": 0,
             "total_tasks": 0
         }
-        
+
         # 缩略图将在异步任务中生成
         response_data["thumbnail"] = None
-        
+
         return ProjectResponse(**response_data)
         
     except HTTPException:
@@ -192,7 +191,6 @@ async def create_project(
             updated_at=project.updated_at,
             completed_at=project.completed_at,
             total_clips=0,
-            total_collections=0,
             total_tasks=0
         )
     except Exception as e:
@@ -229,7 +227,6 @@ def get_projects(
 def get_project(
     project_id: str,
     include_clips: bool = Query(False, description="是否包含切片数据"),
-    include_collections: bool = Query(False, description="是否包含合集数据"),
     project_service: ProjectService = Depends(get_project_service)
 ):
     """Get a project by ID."""
@@ -237,38 +234,27 @@ def get_project(
         project = project_service.get_project_with_stats(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        
-        # 如果需要包含clips和collections数据，则加载它们
+
+        # 如果需要包含clips数据，则加载它们
         clips_data = None
-        collections_data = None
-        
-        if include_clips or include_collections:
+
+        if include_clips:
             from ...services.clip_service import ClipService
-            from ...services.collection_service import CollectionService
             from ...core.database import get_db
-            
+
             # 获取数据库会话
             db = next(get_db())
-            
-            if include_clips:
-                clip_service = ClipService(db)
-                clips = clip_service.get_multi(filters={"project_id": project_id})
-                # 转换为字典格式
-                clips_data = [clip.to_dict() if hasattr(clip, 'to_dict') else clip.__dict__ for clip in clips]
-            
-            if include_collections:
-                collection_service = CollectionService(db)
-                collections = collection_service.get_multi(filters={"project_id": project_id})
-                # 转换为字典格式
-                collections_data = [collection.to_dict() if hasattr(collection, 'to_dict') else collection.__dict__ for collection in collections]
-        
-        # 创建包含clips和collections的响应数据
+
+            clip_service = ClipService(db)
+            clips = clip_service.get_multi(filters={"project_id": project_id})
+            # 转换为字典格式
+            clips_data = [clip.to_dict() if hasattr(clip, 'to_dict') else clip.__dict__ for clip in clips]
+
+        # 创建包含clips的响应数据
         response_data = project.model_dump() if hasattr(project, 'model_dump') else project.__dict__
         if clips_data is not None:
             response_data['clips'] = clips_data
-        if collections_data is not None:
-            response_data['collections'] = collections_data
-        
+
         # 返回更新后的响应
         return ProjectResponse(**response_data)
     except HTTPException:
@@ -303,7 +289,6 @@ def update_project(
             updated_at=datetime.utcnow(),
             completed_at=None,
             total_clips=0,
-            total_collections=0,
             total_tasks=0
         )
     except HTTPException:
@@ -1039,6 +1024,7 @@ def get_clip_cover(
 class RegenerateCoverRequest(BaseModel):
     cover_title: Optional[str] = None
     cover_subtitle: Optional[str] = None
+    xhs_tags: Optional[List[str]] = None
 
 @router.post("/{project_id}/clips/{clip_id}/regenerate-cover")
 def regenerate_clip_cover(
@@ -1047,7 +1033,7 @@ def regenerate_clip_cover(
     body: Optional[RegenerateCoverRequest] = None,
     project_service: ProjectService = Depends(get_project_service)
 ):
-    """重新生成单个切片的封面"""
+    """重新生成单个切片的封面（支持 LLM 生成小红书文案 + Seedream prompt）"""
     try:
         from ...core.path_utils import get_project_directory
         from ...models.clip import Clip
@@ -1056,6 +1042,7 @@ def regenerate_clip_cover(
             _download_image, _prepend_cover_to_video,
             _get_video_dimensions, _pick_seedream_size,
             _build_cover_prompt, _load_step8_json, _save_step8_json,
+            _generate_cover_prompt_via_llm,
         )
         from ...utils.minio_upload_client import upload_file
         import re as _re, random as _random, tempfile as _tempfile
@@ -1082,6 +1069,42 @@ def regenerate_clip_cover(
         if not video_path:
             raise HTTPException(status_code=404, detail="找不到视频文件")
 
+        # 构造内容摘要
+        content_summary = clip.description or ""
+        if not content_summary:
+            meta = clip.clip_metadata or {}
+            cs = meta.get("content", "") or meta.get("outline", "") or ""
+            if isinstance(cs, list):
+                cs = "；".join(str(x) for x in cs[:5])
+            if len(cs) > 200:
+                cs = cs[:200] + "..."
+            content_summary = cs
+
+        # 提前获取视频尺寸（LLM 需要知道画面比例）
+        vid_w, vid_h = _get_video_dimensions(video_path)
+
+        # 前端 input 框的值 = 封面上实际渲染的文字
+        cover_title = (body.cover_title if body and body.cover_title else None) or title
+        cover_subtitle = (body.cover_subtitle if body and body.cover_subtitle else None) or content_summary
+
+        # 调 LLM 生成 seedream_prompt（包含 cover_title/cover_subtitle 文字）+ xhs 发帖文案
+        llm_result = _generate_cover_prompt_via_llm(
+            title, content_summary, vid_w, vid_h,
+            cover_title=cover_title, cover_subtitle=cover_subtitle,
+        )
+
+        seedream_prompt = None
+        xhs_title = ""
+        xhs_content = ""
+        xhs_tags = body.xhs_tags if body and body.xhs_tags else []
+
+        if llm_result:
+            seedream_prompt = llm_result["seedream_prompt"]
+            xhs_title = llm_result["title"]
+            xhs_content = llm_result["content_polished"]
+            if not xhs_tags:
+                xhs_tags = llm_result["tags"]
+
         with _tempfile.TemporaryDirectory() as tmpdir:
             screenshot_path = Path(tmpdir) / "screenshot.jpg"
             rand_sec = round(_random.uniform(1.0, 10.0), 1)
@@ -1092,47 +1115,35 @@ def regenerate_clip_cover(
                 raise HTTPException(status_code=500, detail="无法截取视频截图")
 
             screenshot_url = upload_file(screenshot_path)
-            vid_w, vid_h = _get_video_dimensions(video_path)
             size = _pick_seedream_size(vid_w, vid_h)
 
-            content_summary = clip.description or ""
             image_url = _generate_cover_with_seedream(
                 screenshot_url=screenshot_url,
                 title=title,
                 content_summary=content_summary,
                 size=size,
+                custom_prompt=seedream_prompt,
             )
 
             raw_bytes = _download_image(image_url)
-            # PIL 叠加精确中文标题（优先用前端传入的标题和副标题）
-            from ...pipeline.step8_cover import _overlay_text_on_cover
-            cover_title = (body.cover_title if body and body.cover_title else title)
-            # 副标题 fallback：与 pipeline step8_cover 保持一致，从 clip_metadata.content 取
-            if body and body.cover_subtitle is not None:
-                cover_subtitle = body.cover_subtitle
-            else:
-                meta = clip.clip_metadata or {}
-                cs = meta.get("content", "") or meta.get("outline", "") or ""
-                if isinstance(cs, list):
-                    cs = "；".join(str(x) for x in cs[:5])
-                if len(cs) > 200:
-                    cs = cs[:200] + "..."
-                cover_subtitle = cs
-            final_bytes = _overlay_text_on_cover(raw_bytes, cover_title, cover_subtitle)
             cover_output = clips_with_subs / f"{safe_name}_cover.png"
             cover_output.parent.mkdir(parents=True, exist_ok=True)
-            cover_output.write_bytes(final_bytes)
+            cover_output.write_bytes(raw_bytes)
 
-        # 更新 step8_cover.json
+        # 更新 step8_cover.json（含 xhs 字段）
+        prompt_used = seedream_prompt or _build_cover_prompt(title, content_summary)
         step8_json_path = metadata_dir / "step8_cover.json"
         step8_data = _load_step8_json(step8_json_path)
-        # 移除旧记录
         step8_data["clips"] = [c for c in step8_data["clips"] if str(c.get("clip_id")) != str(clip_id)]
         step8_data["clips"].append({
             "clip_id": str(clip_id),
             "cover_path": str(cover_output),
             "cover_inserted": False,
-            "prompt_used": f"regenerated: {title[:50]}",
+            "prompt_used": prompt_used,
+            "xhs_title": xhs_title,
+            "xhs_content": xhs_content,
+            "xhs_tags": xhs_tags,
+            "seedream_prompt": seedream_prompt or prompt_used,
         })
         _save_step8_json(step8_json_path, step8_data)
 
@@ -1143,6 +1154,37 @@ def regenerate_clip_cover(
     except Exception as e:
         logger.error(f"重新生成封面失败: {e}")
         raise HTTPException(status_code=500, detail=f"重新生成封面失败: {str(e)}")
+
+
+@router.get("/{project_id}/clips/{clip_id}/cover-meta")
+def get_clip_cover_meta(
+    project_id: str,
+    clip_id: str,
+):
+    """获取切片的封面元数据（xhs_title / xhs_content / xhs_tags / seedream_prompt）"""
+    try:
+        from ...core.path_utils import get_project_directory
+        from ...pipeline.step8_cover import _load_step8_json
+
+        project_dir = get_project_directory(project_id)
+        metadata_dir = project_dir / "output" / "metadata"
+        step8_json_path = metadata_dir / "step8_cover.json"
+        step8_data = _load_step8_json(step8_json_path)
+
+        for clip_record in step8_data.get("clips", []):
+            if str(clip_record.get("clip_id")) == str(clip_id):
+                return {
+                    "xhs_title": clip_record.get("xhs_title", ""),
+                    "xhs_content": clip_record.get("xhs_content", ""),
+                    "xhs_tags": clip_record.get("xhs_tags", []),
+                    "seedream_prompt": clip_record.get("seedream_prompt", ""),
+                }
+
+        return {"xhs_title": "", "xhs_content": "", "xhs_tags": [], "seedream_prompt": ""}
+
+    except Exception as e:
+        logger.error(f"获取封面元数据失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{project_id}/clips/{clip_id}/open-folder")
@@ -1227,55 +1269,6 @@ def sync_all_projects_from_filesystem(
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
 
-@router.patch("/{project_id}/collections/{collection_id}/reorder")
-def reorder_collection_clips(
-    project_id: str,
-    collection_id: str,
-    clip_ids: List[str],
-    db: Session = Depends(get_db)
-):
-    """重新排序合集中的切片"""
-    try:
-        from backend.services.collection_service import CollectionService
-        
-        # 创建合集服务
-        collection_service = CollectionService(db)
-        
-        # 获取合集
-        collection = collection_service.get(collection_id)
-        if not collection:
-            raise HTTPException(status_code=404, detail="Collection not found")
-        
-        # 验证合集属于指定项目
-        if str(collection.project_id) != project_id:
-            raise HTTPException(status_code=400, detail="Collection does not belong to the specified project")
-        
-        # 更新collection_metadata中的clip_ids
-        metadata = getattr(collection, 'collection_metadata', {}) or {}
-        metadata['clip_ids'] = clip_ids
-        
-        # 直接更新数据库中的collection_metadata字段
-        from sqlalchemy import update
-        from backend.models.collection import Collection
-        
-        stmt = update(Collection).where(Collection.id == collection_id).values(
-            collection_metadata=metadata
-        )
-        collection_service.db.execute(stmt)
-        collection_service.db.commit()
-        
-        return {
-            "message": "Collection clips reordered successfully",
-            "clip_ids": clip_ids
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"重新排序合集 {collection_id} 切片失败: {e}")
-        raise HTTPException(status_code=500, detail=f"重新排序失败: {str(e)}")
-
-
 @router.post("/sync/{project_id}")
 def sync_project_from_filesystem(
     project_id: str,
@@ -1303,7 +1296,6 @@ def sync_project_from_filesystem(
             "success": result.get("success", False),
             "project_id": project_id,
             "clips_synced": result.get("clips_synced", 0),
-            "collections_synced": result.get("collections_synced", 0),
             "message": f"项目 {project_id} 同步完成"
         }
         
@@ -1314,217 +1306,47 @@ def sync_project_from_filesystem(
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
 
-@router.post("/{project_id}/collections/{collection_id}/generate")
-async def generate_collection_video(
-    project_id: str,
-    collection_id: str,
-    db: Session = Depends(get_db),
-    project_service: ProjectService = Depends(get_project_service)
-):
-    """生成合集视频"""
-    try:
-        from ...models.collection import Collection
-        from ...models.clip import Clip
-        from ...utils.video_processor import VideoProcessor
-        from ...core.path_utils import get_project_directory
-        from pathlib import Path
-        import json
-        
-        # 验证项目是否存在
-        project = project_service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="项目不存在")
-        
-        # 获取合集记录
-        collection = db.query(Collection).filter(Collection.id == collection_id).first()
-        if not collection:
-            raise HTTPException(status_code=404, detail="合集不存在")
-        
-        # 验证合集属于该项目
-        if str(collection.project_id) != project_id:
-            raise HTTPException(status_code=400, detail="合集不属于指定项目")
-        
-        # 获取合集的切片ID列表
-        metadata = getattr(collection, 'collection_metadata', {}) or {}
-        clip_ids = metadata.get('clip_ids', [])
-        
-        if not clip_ids:
-            raise HTTPException(status_code=400, detail="合集没有包含任何切片")
-        
-        # 获取切片信息，并按照clip_ids的顺序排列
-        clips_dict = {clip.id: clip for clip in db.query(Clip).filter(Clip.id.in_(clip_ids)).all()}
-        if len(clips_dict) != len(clip_ids):
-            raise HTTPException(status_code=400, detail="部分切片不存在")
-        
-        # 按照用户调整的顺序获取clips
-        ordered_clips = [clips_dict[clip_id] for clip_id in clip_ids if clip_id in clips_dict]
-        
-        # 获取项目目录
-        project_dir = get_project_directory(project_id)
-        collections_dir = project_dir / "output" / "collections"
-        collections_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 准备切片视频文件路径，按照用户调整的顺序
-        clips_dir = project_dir / "output" / "clips"
-        clip_video_paths = []
-        
-        for clip in ordered_clips:
-            if clip.video_path and Path(clip.video_path).exists():
-                clip_video_paths.append(Path(clip.video_path))
-            else:
-                # 尝试在clips目录中查找
-                possible_paths = [
-                    clips_dir / f"{clip.id}_*.mp4",
-                    clips_dir / f"clip_{clip.id}.mp4",
-                    clips_dir / f"{clip.id}.mp4"
-                ]
-                
-                found = False
-                for pattern in possible_paths:
-                    if pattern.name.endswith('*'):
-                        # 处理通配符
-                        matches = list(clips_dir.glob(pattern.name))
-                        if matches:
-                            clip_video_paths.append(matches[0])
-                            found = True
-                            break
-                    else:
-                        if pattern.exists():
-                            clip_video_paths.append(pattern)
-                            found = True
-                            break
-                
-                if not found:
-                    raise HTTPException(status_code=404, detail=f"切片视频文件不存在: {clip.id}")
-        
-        # 生成合集视频文件名 - 使用合集标题作为文件名
-        collection_name = collection.name or f"collection_{collection_id}"
-        # 使用VideoProcessor的sanitize_filename方法清理文件名
-        from ...utils.video_processor import VideoProcessor
-        safe_name = VideoProcessor.sanitize_filename(collection_name)
-        output_filename = f"{safe_name}.mp4"
-        output_path = collections_dir / output_filename
-        
-        # 使用VideoProcessor创建合集
-        video_processor = VideoProcessor(
-            clips_dir=str(clips_dir),
-            collections_dir=str(collections_dir)
-        )
-        success = video_processor.create_collection(clip_video_paths, output_path)
-        
-        if not success:
-            raise HTTPException(status_code=500, detail="合集视频生成失败")
-        
-        # 生成合集封面
-        thumbnail_path = None
-        try:
-            thumbnail_filename = f"{collection_id}_{safe_name}_thumbnail.jpg"
-            thumbnail_path = collections_dir / thumbnail_filename
-            
-            # 从视频中提取封面（第5秒的帧）
-            thumbnail_success = video_processor.extract_thumbnail(output_path, thumbnail_path, time_offset=5)
-            if thumbnail_success:
-                collection.thumbnail_path = str(thumbnail_path)
-                logger.info(f"合集封面生成成功: {thumbnail_path}")
-            else:
-                logger.warning(f"合集封面生成失败: {collection_id}")
-        except Exception as e:
-            logger.error(f"生成合集封面时出错: {e}")
-        
-        # 更新合集的export_path
-        collection.export_path = str(output_path)
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": "合集视频生成成功",
-            "collection_id": collection_id,
-            "output_path": str(output_path),
-            "filename": output_filename
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"生成合集视频失败: {e}")
-        raise HTTPException(status_code=500, detail=f"生成合集视频失败: {str(e)}")
-
-
 @router.get("/{project_id}/download")
 def download_project_file(
     project_id: str,
     clip_id: Optional[str] = Query(None, description="下载指定切片"),
-    collection_id: Optional[str] = Query(None, description="下载指定合集"),
     db: Session = Depends(get_db),
     project_service: ProjectService = Depends(get_project_service)
 ):
-    """下载项目文件（切片或合集）"""
+    """下载项目文件（切片）"""
     try:
         from fastapi.responses import FileResponse
         from pathlib import Path
-        
+
         # 验证项目是否存在
         project = project_service.get(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="项目不存在")
-        
-        if collection_id:
-            # 下载合集视频
-            from ...models.collection import Collection
-            collection = db.query(Collection).filter(Collection.id == collection_id).first()
-            if not collection:
-                raise HTTPException(status_code=404, detail="合集不存在")
-            
-            if not collection.export_path:
-                raise HTTPException(status_code=404, detail="合集视频文件不存在")
-            
-            file_path = Path(collection.export_path)
-            if not file_path.exists():
-                raise HTTPException(status_code=404, detail="合集视频文件不存在")
-            
-            # 生成下载文件名
-            collection_name = collection.name or f"collection_{collection_id}"
-            from ...utils.video_processor import VideoProcessor
-            safe_name = VideoProcessor.sanitize_filename(collection_name)
-            filename = f"{safe_name}.mp4"
-            
-            # 对文件名进行URL编码
-            import urllib.parse
-            encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
-            
-            return FileResponse(
-                path=str(file_path),
-                filename=filename,
-                media_type="video/mp4",
-                headers={
-                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-                }
-            )
-        
-        elif clip_id:
+
+        if clip_id:
             # 下载切片视频
             from ...models.clip import Clip
             clip = db.query(Clip).filter(Clip.id == clip_id).first()
             if not clip:
                 raise HTTPException(status_code=404, detail="切片不存在")
-            
+
             if not clip.video_path:
                 raise HTTPException(status_code=404, detail="切片视频文件不存在")
-            
+
             file_path = Path(clip.video_path)
             if not file_path.exists():
                 raise HTTPException(status_code=404, detail="切片视频文件不存在")
-            
+
             # 生成下载文件名
             clip_title = clip.title or f"clip_{clip_id}"
             from ...utils.video_processor import VideoProcessor
             safe_name = VideoProcessor.sanitize_filename(clip_title)
             filename = f"{safe_name}.mp4"
-            
+
             # 对文件名进行URL编码
             import urllib.parse
             encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
-            
+
             return FileResponse(
                 path=str(file_path),
                 filename=filename,
@@ -1533,10 +1355,10 @@ def download_project_file(
                     "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
                 }
             )
-        
+
         else:
-            raise HTTPException(status_code=400, detail="必须指定clip_id或collection_id")
-        
+            raise HTTPException(status_code=400, detail="必须指定clip_id")
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1544,51 +1366,3 @@ def download_project_file(
         raise HTTPException(status_code=500, detail=f"下载文件失败: {str(e)}")
 
 
-@router.get("/{project_id}/collections/{collection_id}/thumbnail")
-async def get_collection_thumbnail(
-    project_id: str,
-    collection_id: str,
-    db: Session = Depends(get_db),
-    project_service: ProjectService = Depends(get_project_service)
-):
-    """获取合集封面图片"""
-    try:
-        from fastapi.responses import FileResponse
-        from pathlib import Path
-        
-        # 验证项目是否存在
-        project = project_service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="项目不存在")
-        
-        # 获取合集记录
-        from ...models.collection import Collection
-        collection = db.query(Collection).filter(Collection.id == collection_id).first()
-        if not collection:
-            raise HTTPException(status_code=404, detail="合集不存在")
-        
-        # 验证合集属于该项目
-        if str(collection.project_id) != project_id:
-            raise HTTPException(status_code=400, detail="合集不属于指定项目")
-        
-        # 检查是否有封面
-        if not collection.thumbnail_path:
-            raise HTTPException(status_code=404, detail="合集封面不存在")
-        
-        thumbnail_path = Path(collection.thumbnail_path)
-        if not thumbnail_path.exists():
-            raise HTTPException(status_code=404, detail="合集封面文件不存在")
-        
-        return FileResponse(
-            path=str(thumbnail_path),
-            media_type="image/jpeg",
-            headers={
-                "Cache-Control": "public, max-age=3600"  # 缓存1小时
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取合集封面失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取合集封面失败: {str(e)}")

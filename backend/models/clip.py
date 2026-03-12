@@ -148,12 +148,6 @@ class Clip(BaseModel):
         "Project", 
         back_populates="clips"
     )
-    collections = relationship(
-        "Collection", 
-        secondary="clip_collection",
-        back_populates="clips"
-    )
-    
     def __repr__(self):
         return f"<Clip(id={self.id}, title='{self.title}', duration={self.duration}s)>"
     

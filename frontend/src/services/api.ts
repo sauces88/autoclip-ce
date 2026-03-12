@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { Project, Clip, Collection } from '../store/useProjectStore'
+import { Project, Clip } from '../store/useProjectStore'
 
 // 格式化时间函数（暂时未使用，保留备用）
 
@@ -258,30 +258,6 @@ export const projectApi = {
     }
   },
 
-  // 获取项目合集
-  getCollections: async (projectId: string): Promise<any[]> => {
-    try {
-      // 只从数据库获取数据，不再回退到文件系统
-      const response = await api.get(`/collections/?project_id=${projectId}`)
-      const collections = (response as any).items || response || []
-      
-      // 转换后端数据格式为前端期望的格式
-      return collections.map((collection: any) => ({
-        id: collection.id,
-        collection_title: collection.name || collection.collection_title || '',
-        collection_summary: collection.description || collection.collection_summary || '',
-        clip_ids: collection.clip_ids || collection.metadata?.clip_ids || [],
-        collection_type: collection.collection_type || 'ai_recommended',
-        created_at: collection.created_at,
-        project_id: collection.project_id,
-        thumbnail_path: collection.thumbnail_path
-      }))
-    } catch (error) {
-      console.error('Failed to get collections:', error)
-      return []
-    }
-  },
-
   // 重启指定步骤
   restartStep: async (id: string, step: number): Promise<void> => {
     await api.post(`/projects/${id}/restart-step`, { step })
@@ -302,60 +278,9 @@ export const projectApi = {
     return api.post(`/clips/${clipId}/generate-title`)
   },
 
-  // 创建合集
-  createCollection: (projectId: string, collectionData: { collection_title: string, collection_summary: string, clip_ids: string[] }): Promise<Collection> => {
-    return api.post(`/collections/`, {
-      project_id: projectId,
-      name: collectionData.collection_title,
-      description: collectionData.collection_summary,
-      metadata: {
-        clip_ids: collectionData.clip_ids,
-        collection_type: 'manual'
-      }
-    })
-  },
-
-  // 更新合集信息
-  updateCollection: (_projectId: string, collectionId: string, updates: Partial<Collection>): Promise<Collection> => {
-    // 如果updates包含clip_ids，需要将其包装在metadata中
-    const apiUpdates: Record<string, any> = { ...updates }
-    if ('clip_ids' in updates && updates.clip_ids !== undefined) {
-      apiUpdates.metadata = { clip_ids: updates.clip_ids }
-      delete apiUpdates.clip_ids
-    }
-    return api.put(`/collections/${collectionId}`, apiUpdates)
-  },
-
-  // 重新排序合集切片
-  reorderCollectionClips: (projectId: string, collectionId: string, clipIds: string[]): Promise<Collection> => {
-    return api.patch(`/projects/${projectId}/collections/${collectionId}/reorder`, clipIds)
-  },
-
-  // 删除合集
-  deleteCollection: (_projectId: string, collectionId: string): Promise<{message: string, deleted_collection: string}> => {
-    return api.delete(`/collections/${collectionId}`)
-  },
-
-  // 生成合集标题
-  generateCollectionTitle: (collectionId: string): Promise<{collection_id: string, generated_title: string, success: boolean}> => {
-    return api.post(`/collections/${collectionId}/generate-title`)
-  },
-
-  // 更新合集标题
-  updateCollectionTitle: (collectionId: string, title: string): Promise<{collection_id: string, title: string, success: boolean}> => {
-    return api.put(`/collections/${collectionId}/title`, { title })
-  },
-
   // 下载切片视频
   downloadClip: (_projectId: string, clipId: string): Promise<Blob> => {
     return api.get(`/files/projects/${_projectId}/clips/${clipId}`, {
-      responseType: 'blob'
-    })
-  },
-
-  // 下载合集视频
-  downloadCollection: (projectId: string, collectionId: string): Promise<Blob> => {
-    return api.get(`/files/projects/${projectId}/collections/${collectionId}`, {
       responseType: 'blob'
     })
   },
@@ -367,32 +292,24 @@ export const projectApi = {
     })
   },
 
-  // 生成合集视频
-  generateCollectionVideo: (projectId: string, collectionId: string) => {
-    return api.post(`/projects/${projectId}/collections/${collectionId}/generate`)
-  },
-
-  downloadVideo: async (projectId: string, clipId?: string, collectionId?: string) => {
+  downloadVideo: async (projectId: string, clipId?: string) => {
     let url = `/projects/${projectId}/download`
     if (clipId) {
       url += `?clip_id=${clipId}`
-    } else if (collectionId) {
-      url += `?collection_id=${collectionId}`
     }
-    
+
     try {
       // 对于blob类型的响应，需要直接使用axios而不是经过拦截器
-      const response = await axios.get(`/api/v1${url}`, { 
+      const response = await axios.get(`/api/v1${url}`, {
         responseType: 'blob',
         headers: {
           'Accept': 'application/octet-stream'
         }
       })
-      
+
       // 从响应头获取文件名，如果没有则使用默认名称
       const contentDisposition = response.headers['content-disposition']
-      let filename = clipId ? `clip_${clipId}.mp4` : 
-                     collectionId ? `collection_${collectionId}.mp4` : 
+      let filename = clipId ? `clip_${clipId}.mp4` :
                      `project_${projectId}.mp4`
       
       if (contentDisposition) {
@@ -442,11 +359,6 @@ export const projectApi = {
   // 获取切片视频URL
   getClipVideoUrl: (projectId: string, clipId: string, _clipTitle?: string): string => {
     return `/api/v1/projects/${projectId}/clips/${clipId}`
-  },
-
-  // 获取合集视频URL
-  getCollectionVideoUrl: (projectId: string, collectionId: string): string => {
-    return `/api/v1/projects/${projectId}/collections/${collectionId}`
   },
 
   // 生成项目缩略图

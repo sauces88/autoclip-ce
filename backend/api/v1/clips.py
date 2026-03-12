@@ -58,9 +58,8 @@ async def update_clip_title(
             clip_metadata=getattr(clip, 'clip_metadata', {}) or {},
             created_at=getattr(clip, 'created_at', None),
             updated_at=getattr(clip, 'updated_at', None),
-            collection_ids=[]
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -158,7 +157,6 @@ async def create_clip(
             clip_metadata=getattr(clip, 'clip_metadata', {}) or {},
             created_at=getattr(clip, 'created_at', None) if isinstance(getattr(clip, 'created_at', None), (type(None), __import__('datetime').datetime)) else None,
             updated_at=getattr(clip, 'updated_at', None) if isinstance(getattr(clip, 'updated_at', None), (type(None), __import__('datetime').datetime)) else None,
-            collection_ids=[]
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

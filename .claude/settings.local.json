@@ -27,7 +27,10 @@
       "mcp__sequential-thinking__sequentialthinking",
       "WebSearch",
       "WebFetch(domain:ai.google.dev)",
-      "mcp__MySQL__describe_table"
+      "mcp__MySQL__describe_table",
+      "Bash(ffmpeg.exe:*)",
+      "Bash(taskkill:*)",
+      "Bash(xargs grep:*)"
     ]
   },
   "hooks": {
