@@ -1053,7 +1053,7 @@ def regenerate_clip_cover(
 
         project_dir = get_project_directory(project_id)
         clips_with_subs = project_dir / "output" / "clips_with_subs"
-        metadata_dir = project_dir / "output" / "metadata"
+        metadata_dir = project_dir / "metadata"
 
         title = clip.title or ""
         safe_name = _re.sub(r'[\\/:*?"<>|]', "_", title)
@@ -1083,27 +1083,38 @@ def regenerate_clip_cover(
         # 提前获取视频尺寸（LLM 需要知道画面比例）
         vid_w, vid_h = _get_video_dimensions(video_path)
 
-        # 前端 input 框的值 = 封面上实际渲染的文字
-        cover_title = (body.cover_title if body and body.cover_title else None) or title
-        cover_subtitle = (body.cover_subtitle if body and body.cover_subtitle else None) or content_summary
+        # 判断前端是否指定了封面标题/副标题
+        has_user_cover_title = body and body.cover_title and body.cover_title.strip()
+        has_user_cover_subtitle = body and body.cover_subtitle and body.cover_subtitle.strip()
 
-        # 调 LLM 生成 seedream_prompt（包含 cover_title/cover_subtitle 文字）+ xhs 发帖文案
+        # 调 LLM 生成 seedream_prompt + xhs 发帖文案
+        # 如果前端指定了封面标题，则传给 LLM 让它直接使用
+        # 如果没指定，让 LLM 根据 content 生成吸睛标题（≤12字主标题，≤25字副标题）
         llm_result = _generate_cover_prompt_via_llm(
             title, content_summary, vid_w, vid_h,
-            cover_title=cover_title, cover_subtitle=cover_subtitle,
+            cover_title=body.cover_title if has_user_cover_title else "",
+            cover_subtitle=body.cover_subtitle if has_user_cover_subtitle else "",
         )
 
         seedream_prompt = None
         xhs_title = ""
         xhs_content = ""
         xhs_tags = body.xhs_tags if body and body.xhs_tags else []
+        cover_title_final = ""
+        cover_subtitle_final = ""
 
         if llm_result:
             seedream_prompt = llm_result["seedream_prompt"]
             xhs_title = llm_result["title"]
             xhs_content = llm_result["content_polished"]
+            cover_title_final = llm_result["cover_title"]
+            cover_subtitle_final = llm_result["cover_subtitle"]
             if not xhs_tags:
                 xhs_tags = llm_result["tags"]
+        else:
+            # LLM 失败时的 fallback
+            cover_title_final = (body.cover_title if has_user_cover_title else title) or title
+            cover_subtitle_final = (body.cover_subtitle if has_user_cover_subtitle else content_summary[:25]) or ""
 
         with _tempfile.TemporaryDirectory() as tmpdir:
             screenshot_path = Path(tmpdir) / "screenshot.jpg"
@@ -1140,6 +1151,8 @@ def regenerate_clip_cover(
             "cover_path": str(cover_output),
             "cover_inserted": False,
             "prompt_used": prompt_used,
+            "cover_title": cover_title_final,
+            "cover_subtitle": cover_subtitle_final,
             "xhs_title": xhs_title,
             "xhs_content": xhs_content,
             "xhs_tags": xhs_tags,
@@ -1147,7 +1160,14 @@ def regenerate_clip_cover(
         })
         _save_step8_json(step8_json_path, step8_data)
 
-        return {"success": True, "cover_path": str(cover_output), "message": "封面已重新生成"}
+        return {
+            "success": True,
+            "cover_path": str(cover_output),
+            "message": "封面已重新生成",
+            "cover_title": cover_title_final,
+            "cover_subtitle": cover_subtitle_final,
+            "xhs_tags": xhs_tags,
+        }
 
     except HTTPException:
         raise
@@ -1161,26 +1181,28 @@ def get_clip_cover_meta(
     project_id: str,
     clip_id: str,
 ):
-    """获取切片的封面元数据（xhs_title / xhs_content / xhs_tags / seedream_prompt）"""
+    """获取切片的封面元数据（cover_title / cover_subtitle / xhs_tags 等）"""
     try:
         from ...core.path_utils import get_project_directory
         from ...pipeline.step8_cover import _load_step8_json
 
         project_dir = get_project_directory(project_id)
-        metadata_dir = project_dir / "output" / "metadata"
+        metadata_dir = project_dir / "metadata"
         step8_json_path = metadata_dir / "step8_cover.json"
         step8_data = _load_step8_json(step8_json_path)
 
         for clip_record in step8_data.get("clips", []):
             if str(clip_record.get("clip_id")) == str(clip_id):
                 return {
+                    "cover_title": clip_record.get("cover_title", ""),
+                    "cover_subtitle": clip_record.get("cover_subtitle", ""),
                     "xhs_title": clip_record.get("xhs_title", ""),
                     "xhs_content": clip_record.get("xhs_content", ""),
                     "xhs_tags": clip_record.get("xhs_tags", []),
                     "seedream_prompt": clip_record.get("seedream_prompt", ""),
                 }
 
-        return {"xhs_title": "", "xhs_content": "", "xhs_tags": [], "seedream_prompt": ""}
+        return {"cover_title": "", "cover_subtitle": "", "xhs_title": "", "xhs_content": "", "xhs_tags": [], "seedream_prompt": ""}
 
     except Exception as e:
         logger.error(f"获取封面元数据失败: {e}")

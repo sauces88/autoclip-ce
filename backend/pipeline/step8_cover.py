@@ -60,15 +60,15 @@ def _generate_cover_prompt_via_llm(
     用 LLM 生成 Seedream prompt + 小红书发帖文案。
 
     Args:
-        title: clip 原始标题
+        title: clip 原始标题（generated_title 或 title）
         content_summary: 内容摘要
         width: 视频/截图宽度
         height: 视频/截图高度
-        cover_title: 封面上要渲染的大标题（前端 input 传入）
-        cover_subtitle: 封面上要渲染的副标题（前端 input 传入）
+        cover_title: 前端指定的封面主标题（如果有）
+        cover_subtitle: 前端指定的封面副标题（如果有）
 
     Returns:
-        dict: {title, content_polished, tags, seedream_prompt} 或 None（失败时）
+        dict: {cover_title, cover_subtitle, title, content_polished, tags, seedream_prompt} 或 None（失败时）
     """
     try:
         if not _COVER_PROMPT_TEMPLATE_PATH.exists():
@@ -77,11 +77,18 @@ def _generate_cover_prompt_via_llm(
 
         template = _COVER_PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
 
-        # 封面标题/副标题默认用 clip 原始数据
-        if not cover_title:
-            cover_title = title
-        if not cover_subtitle:
-            cover_subtitle = content_summary[:50] if content_summary else ""
+        # 判断是否有前端指定的封面标题
+        has_user_cover_title = bool(cover_title and cover_title.strip())
+        has_user_cover_subtitle = bool(cover_subtitle and cover_subtitle.strip())
+
+        # 构建输入提示
+        if has_user_cover_title or has_user_cover_subtitle:
+            # 前端指定了，告诉 LLM 直接使用
+            input_hint = f"指定的封面主标题: {cover_title}\n指定的封面副标题: {cover_subtitle}"
+            input_hint += "\n（请直接使用以上指定的封面标题，不要修改）"
+        else:
+            # 没有指定，让 LLM 根据 outline/content 生成
+            input_hint = "封面主标题: （请根据内容生成，不超过12字，必须吸睛）\n封面副标题: （请根据内容生成，不超过25字）"
 
         # 判断画面比例
         if width > 0 and height > 0:
@@ -98,8 +105,7 @@ def _generate_cover_prompt_via_llm(
         # 替换模板变量
         prompt = (
             template
-            .replace("{cover_title}", cover_title)
-            .replace("{cover_subtitle}", cover_subtitle)
+            .replace("{input_hint}", input_hint)
             .replace("{title}", title)
             .replace("{content_summary}", content_summary or "无")
             .replace("{aspect_ratio}", aspect_ratio)
@@ -144,7 +150,7 @@ def _generate_cover_prompt_via_llm(
             logger.warning(f"LLM 返回非 dict: {type(result)}")
             return None
 
-        required_keys = {"title", "content_polished", "tags", "seedream_prompt"}
+        required_keys = {"title", "content_polished", "tags", "seedream_prompt", "cover_title", "cover_subtitle"}
         if not required_keys.issubset(result.keys()):
             missing = required_keys - set(result.keys())
             logger.warning(f"LLM 返回缺少字段: {missing}")
@@ -154,7 +160,9 @@ def _generate_cover_prompt_via_llm(
         if isinstance(result["tags"], str):
             result["tags"] = [t.strip() for t in result["tags"].split(",") if t.strip()]
 
-        logger.info(f"[LLM 封面文案] 最终结果: title={result['title']}, tags={result['tags']}")
+        logger.info(f"[LLM 封面文案] 封面标题: {result['cover_title']}")
+        logger.info(f"[LLM 封面文案] 封面副标题: {result['cover_subtitle']}")
+        logger.info(f"[LLM 封面文案] 发帖标题: {result['title']}, tags={result['tags']}")
         logger.info(f"[LLM 封面文案] seedream_prompt: {result['seedream_prompt']}")
         return result
 
@@ -729,18 +737,23 @@ class CoverGenerator:
                 size = _pick_seedream_size(vid_w, vid_h)
 
                 # 4. 用 LLM 生成小红书风格文案 + Seedream prompt
+                # 流水线执行时不传 cover_title/cover_subtitle，让 LLM 根据 content 生成吸睛标题
                 llm_result = _generate_cover_prompt_via_llm(
                     str(title), content_summary, vid_w, vid_h,
-                    cover_title=str(title), cover_subtitle=content_summary[:50] if content_summary else "",
+                    cover_title="", cover_subtitle="",  # 不指定，让 LLM 生成
                 )
 
                 if llm_result:
                     seedream_prompt = llm_result["seedream_prompt"]
+                    cover_title_generated = llm_result["cover_title"]
+                    cover_subtitle_generated = llm_result["cover_subtitle"]
                     xhs_title = llm_result["title"]
                     xhs_content = llm_result["content_polished"]
                     xhs_tags = llm_result["tags"]
                 else:
                     seedream_prompt = None  # 使用默认 prompt
+                    cover_title_generated = str(title)
+                    cover_subtitle_generated = content_summary[:25] if content_summary else ""
                     xhs_title = ""
                     xhs_content = ""
                     xhs_tags = []
@@ -777,6 +790,8 @@ class CoverGenerator:
                 "cover_path": str(cover_output),
                 "cover_inserted": cover_inserted,
                 "prompt_used": prompt_used,
+                "cover_title": cover_title_generated,
+                "cover_subtitle": cover_subtitle_generated,
                 "xhs_title": xhs_title,
                 "xhs_content": xhs_content,
                 "xhs_tags": xhs_tags,

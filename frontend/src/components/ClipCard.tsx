@@ -30,15 +30,8 @@ const ClipCard: React.FC<ClipCardProps> = ({
   const [showCoverModal, setShowCoverModal] = useState(false)
   const [coverUrl, setCoverUrl] = useState<string | null>(null)
   const [regeneratingCover, setRegeneratingCover] = useState(false)
-  const [coverTitle, setCoverTitle] = useState(clip.generated_title || clip.title || '')
-  const [coverSubtitle, setCoverSubtitle] = useState(() => {
-    // 与 pipeline step8_cover.py 保持一致：优先用 content 数组拼接，其次用 outline
-    if (clip.content && clip.content.length > 0) {
-      const joined = clip.content.slice(0, 5).join('；')
-      return joined.length > 200 ? joined.slice(0, 200) + '...' : joined
-    }
-    return clip.outline || ''
-  })
+  const [coverTitle, setCoverTitle] = useState('')  // 初始为空，从 cover-meta 加载
+  const [coverSubtitle, setCoverSubtitle] = useState('')  // 初始为空，从 cover-meta 加载
   const [xhsTags, setXhsTags] = useState<string[]>([])
   const [newTagInput, setNewTagInput] = useState('')
   const [tagInputVisible, setTagInputVisible] = useState(false)
@@ -77,13 +70,32 @@ const ClipCard: React.FC<ClipCardProps> = ({
       fetch(`/api/v1/projects/${projectId}/clips/${clip.id}/cover-meta`)
         .then(res => res.json())
         .then(data => {
-          // 只加载标签，coverTitle/coverSubtitle 始终用 clip 原始数据
-          if (data.xhs_tags && data.xhs_tags.length > 0) setXhsTags(data.xhs_tags)
+          // 优先使用已保存的封面元数据
+          if (data.cover_title) {
+            setCoverTitle(data.cover_title)
+          } else {
+            // 没有保存的数据，用 clip 原始数据作为默认值
+            setCoverTitle(clip.generated_title || clip.title || '')
+          }
+          if (data.cover_subtitle) {
+            setCoverSubtitle(data.cover_subtitle)
+          } else {
+            // 没有保存的数据，用 clip.content 或 clip.outline 作为默认值
+            if (clip.content && clip.content.length > 0) {
+              const joined = clip.content.slice(0, 5).join('；')
+              setCoverSubtitle(joined.length > 25 ? joined.slice(0, 25) : joined)
+            } else {
+              setCoverSubtitle(clip.outline || '')
+            }
+          }
+          if (data.xhs_tags && data.xhs_tags.length > 0) {
+            setXhsTags(data.xhs_tags)
+          }
           setCoverMetaLoaded(true)
         })
         .catch(() => { /* ignore */ })
     }
-  }, [showCoverModal, projectId, clip.id, coverMetaLoaded])
+  }, [showCoverModal, projectId, clip.id, coverMetaLoaded, clip])
 
   // 标签输入框聚焦
   useEffect(() => {
@@ -633,7 +645,10 @@ const ClipCard: React.FC<ClipCardProps> = ({
                 if (data.success) {
                   message.success('封面已重新生成')
                   setCoverUrl(`/api/v1/projects/${projectId}/clips/${clip.id}/cover?t=${Date.now()}`)
-                  setCoverMetaLoaded(false)  // 重新加载 meta
+                  // 更新表单值为 LLM 生成的新值
+                  if (data.cover_title) setCoverTitle(data.cover_title)
+                  if (data.cover_subtitle) setCoverSubtitle(data.cover_subtitle)
+                  if (data.xhs_tags && data.xhs_tags.length > 0) setXhsTags(data.xhs_tags)
                 } else {
                   message.error(data.detail || '重新生成封面失败')
                 }
@@ -663,7 +678,7 @@ const ClipCard: React.FC<ClipCardProps> = ({
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div>
-            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>封面标题（大字）</div>
+            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>封面标题</div>
             <Input.TextArea
               value={coverTitle}
               onChange={e => setCoverTitle(e.target.value)}
@@ -673,7 +688,7 @@ const ClipCard: React.FC<ClipCardProps> = ({
             />
           </div>
           <div>
-            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>封面副标题（小字，留空不显示）</div>
+            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>封面副标题</div>
             <Input.TextArea
               value={coverSubtitle}
               onChange={e => setCoverSubtitle(e.target.value)}
@@ -684,7 +699,7 @@ const ClipCard: React.FC<ClipCardProps> = ({
             />
           </div>
           <div>
-            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>小红书标签</div>
+            <div style={{ fontSize: '12px', color: '#999', marginBottom: '4px' }}>标签</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
               {xhsTags.map((tag, index) => (
                 <Tag

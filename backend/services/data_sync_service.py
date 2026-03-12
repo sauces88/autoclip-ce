@@ -155,31 +155,35 @@ class DataSyncService:
                         break
                     except Exception as e:
                         logger.warning(f"读取切片文件失败 {clips_file}: {e}")
-            
+
             if not clips_data:
                 logger.info(f"项目 {project_id} 没有找到切片数据")
                 return 0
-            
+
             # 确保clips_data是列表
             if isinstance(clips_data, dict) and "clips" in clips_data:
                 clips_data = clips_data["clips"]
             elif not isinstance(clips_data, list):
                 logger.warning(f"项目 {project_id} 切片数据格式不正确")
                 return 0
-            
+
+            # 用于记录旧 ID 到新 ID 的映射
+            id_mapping = {}  # {old_id: new_db_id}
+
             synced_count = 0
             updated_count = 0
             for clip_data in clips_data:
                 try:
+                    old_clip_id = clip_data.get('id', str(synced_count + 1))
+
                     # 检查切片是否已存在
                     existing_clip = self.db.query(Clip).filter(
                         Clip.project_id == project_id,
                         Clip.title == clip_data.get("generated_title", clip_data.get("title", ""))
                     ).first()
-                    
+
                     # 解析视频路径：优先用 clips_metadata.json 中已记录的实际路径，
                     # 否则按序号 glob 磁盘查找，最后才构造路径
-                    clip_id = clip_data.get('id', str(synced_count + 1))
                     from ..core.path_utils import get_project_directory
                     project_clips_dir = get_project_directory(project_id) / "output" / "clips"
                     project_clips_dir.mkdir(parents=True, exist_ok=True)
@@ -194,11 +198,13 @@ class DataSyncService:
                         return None
 
                     if existing_clip:
-                        video_path = _resolve_video_path(clip_id, clip_data)
+                        video_path = _resolve_video_path(old_clip_id, clip_data)
                         if video_path:
                             existing_clip.video_path = video_path
                         if existing_clip.tags is None:
                             existing_clip.tags = []
+                        # 记录 ID 映射
+                        id_mapping[old_clip_id] = str(existing_clip.id)
                         updated_count += 1
                         continue
 
@@ -207,8 +213,8 @@ class DataSyncService:
                     end_time = self._convert_time_to_seconds(clip_data.get('end_time', '00:00:00'))
                     duration = end_time - start_time
 
-                    video_path = _resolve_video_path(clip_id, clip_data)
-                    
+                    video_path = _resolve_video_path(old_clip_id, clip_data)
+
                     # 创建切片记录
                     clip = Clip(
                         project_id=project_id,
@@ -223,22 +229,56 @@ class DataSyncService:
                         clip_metadata=clip_data,
                         status=ClipStatus.COMPLETED
                     )
-                    
+
                     self.db.add(clip)
+                    self.db.flush()  # 获取生成的 UUID
+                    id_mapping[old_clip_id] = str(clip.id)
                     synced_count += 1
-                    
+
                 except Exception as e:
                     logger.error(f"同步切片失败: {e}")
                     continue
-            
+
             self.db.commit()
             logger.info(f"项目 {project_id} 同步了 {synced_count} 个切片，更新了 {updated_count} 个切片")
+
+            # 更新 step8_cover.json 中的 clip_id 为数据库 UUID
+            if id_mapping:
+                self._update_step8_cover_ids(project_dir, id_mapping)
+
             return synced_count
-            
+
         except Exception as e:
             logger.error(f"同步切片数据失败: {str(e)}")
             return 0
-    
+
+    def _update_step8_cover_ids(self, project_dir: Path, id_mapping: Dict[str, str]) -> None:
+        """更新 step8_cover.json 中的 clip_id 为数据库 UUID"""
+        try:
+            step8_json_path = project_dir / "metadata" / "step8_cover.json"
+            if not step8_json_path.exists():
+                logger.info("step8_cover.json 不存在，跳过 ID 更新")
+                return
+
+            with open(step8_json_path, 'r', encoding='utf-8') as f:
+                step8_data = json.load(f)
+
+            updated = False
+            for clip_record in step8_data.get("clips", []):
+                old_id = str(clip_record.get("clip_id", ""))
+                if old_id in id_mapping:
+                    clip_record["clip_id"] = id_mapping[old_id]
+                    logger.info(f"更新 step8_cover.json clip_id: {old_id} -> {id_mapping[old_id]}")
+                    updated = True
+
+            if updated:
+                with open(step8_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(step8_data, f, ensure_ascii=False, indent=2)
+                logger.info("step8_cover.json ID 更新完成")
+
+        except Exception as e:
+            logger.warning(f"更新 step8_cover.json ID 失败: {e}")
+
     def sync_project_data(self, project_id: str, project_dir: Path) -> Dict[str, Any]:
         """同步项目数据到数据库"""
         try:

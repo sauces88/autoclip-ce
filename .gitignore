@@ -96,6 +96,6 @@ dump.rdb
 *.tmp
 *.temp
 
-
+nul
 settings.json
 .env
