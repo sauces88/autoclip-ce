@@ -449,7 +449,7 @@ const ClipCard: React.FC<ClipCardProps> = ({
                 icon={<EyeOutlined />}
                 onClick={async () => {
                   try {
-                    const url = `/api/v1/projects/${projectId}/clips/${clip.id}/cover`
+                    const url = `/api/v1/projects/${projectId}/clips/${clip.id}/cover?t=${Date.now()}`
                     setCoverUrl(url)
                     setShowCoverModal(true)
                   } catch {
@@ -614,6 +614,7 @@ const ClipCard: React.FC<ClipCardProps> = ({
       >
         {coverUrl && (
           <img
+            key={coverUrl}
             src={coverUrl}
             alt="封面"
             style={{ width: '100%', borderRadius: '8px' }}

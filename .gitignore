@@ -95,3 +95,7 @@ dump.rdb
 # 临时文件
 *.tmp
 *.temp
+
+
+settings.json
+.env

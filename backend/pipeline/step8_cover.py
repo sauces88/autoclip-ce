@@ -81,7 +81,7 @@ def _pick_seedream_size(width: int, height: int) -> str:
     如果底图总像素不足 921600，等比放大到刚好满足。
     如果超过 16777216，等比缩小。
     """
-    MIN_PIXELS = 921600    # 1280x720
+    MIN_PIXELS = 3686400   # 1920x1920 (Seedream API 最低要求)
     MAX_PIXELS = 16777216  # 4096x4096
 
     w, h = width, height

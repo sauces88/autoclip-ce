@@ -1005,12 +1005,14 @@ def get_clip_cover(
         title = clip.title or ""
         safe_name = _re.sub(r'[\\/:*?"<>|]', "_", title)
 
+        no_cache = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
         # 尝试多种后缀
         for ext in ("_cover.png", "_cover.jpg"):
             cover_path = clips_with_subs / f"{safe_name}{ext}"
             if cover_path.exists():
                 media = "image/png" if ext.endswith(".png") else "image/jpeg"
-                return FileResponse(path=str(cover_path), media_type=media, filename=cover_path.name)
+                return FileResponse(path=str(cover_path), media_type=media, filename=cover_path.name, headers=no_cache)
 
         # 也检查 step8_cover.json
         step8_json = project_dir / "output" / "metadata" / "step8_cover.json"
@@ -1022,7 +1024,7 @@ def get_clip_cover(
                     p = Path(c.get("cover_path", ""))
                     if p.exists():
                         media = "image/png" if p.suffix == ".png" else "image/jpeg"
-                        return FileResponse(path=str(p), media_type=media, filename=p.name)
+                        return FileResponse(path=str(p), media_type=media, filename=p.name, headers=no_cache)
 
         raise HTTPException(status_code=404, detail="封面不存在，可能尚未生成")
 

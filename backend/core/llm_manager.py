@@ -103,8 +103,14 @@ class LLMManager:
             )
 
             # 构建模型池（同提供商多模型轮换）
-            pool_names = self.settings.get("gemini_model_pool", [])
-            if provider_type == ProviderType.GEMINI and pool_names:
+            pool_key_map = {
+                ProviderType.GEMINI: "gemini_model_pool",
+                ProviderType.TENCENT: "tencent_model_pool",
+                ProviderType.BAILIAN: "bailian_model_pool",
+            }
+            pool_key = pool_key_map.get(provider_type)
+            pool_names = self.settings.get(pool_key, []) if pool_key else []
+            if pool_names:
                 # 确保主模型在池首位
                 if model_name not in pool_names:
                     pool_names = [model_name] + pool_names
@@ -115,10 +121,10 @@ class LLMManager:
                 if self.model_pool:
                     self.current_provider = self.model_pool[0]
                     logger.info(
-                        f"已初始化 Gemini 模型池: {[p.model_name for p in self.model_pool]}"
+                        f"已初始化 {provider_type.value} 模型池: {[p.model_name for p in self.model_pool]}"
                     )
                 else:
-                    logger.warning("Gemini 模型池为空，未找到API密钥")
+                    logger.warning(f"{provider_type.value} 模型池为空，未找到API密钥")
             else:
                 self.current_provider = self._create_provider_instance(provider_type, model_name)
                 if self.current_provider:
@@ -130,14 +136,17 @@ class LLMManager:
             logger.error(f"初始化主 provider 失败: {e}")
             self.current_provider = None
 
-        # --- 二级回退模型池（百炼 + 腾讯） ---
+        # --- 二级回退模型池（排除主 provider，避免重复） ---
         self.fallback_pool = []
         self._fallback_pool_index = 0
         fallback_pools = [
             ("bailian_api_key", "bailian_model_pool", ProviderType.BAILIAN, "百炼"),
             ("tencent_api_key", "tencent_model_pool", ProviderType.TENCENT, "腾讯"),
+            ("gemini_api_key", "gemini_model_pool", ProviderType.GEMINI, "Gemini"),
         ]
         for key_field, pool_field, ptype, label in fallback_pools:
+            if ptype == provider_type:
+                continue  # 跳过主 provider，已在主池中
             pool_names = self.settings.get(pool_field, [])
             api_key = self.settings.get(key_field, "")
             if api_key and pool_names:
@@ -246,13 +255,23 @@ class LLMManager:
         lower = err_str.lower()
         return "429" in err_str or "quota" in lower or "rate" in lower or "resource_exhausted" in lower
 
+    @staticmethod
+    def _is_auth_error(err_str: str) -> bool:
+        """判断是否为认证/授权错误（403、key 泄露、无效 key 等），这类错误重试同一 provider 无意义"""
+        lower = err_str.lower()
+        return ("403" in err_str or "401" in err_str
+                or "leaked" in lower or "revoked" in lower
+                or "invalid" in lower and "key" in lower
+                or "permission" in lower or "forbidden" in lower
+                or "unauthorized" in lower)
+
     def call_with_retry(self, prompt: str, input_data: Any = None, max_retries: int = 3, **kwargs) -> str:
         """带重试 + 模型池轮换 + 跨提供商回退的 LLM 调用
 
         流程：
         1. 用当前模型调用
-        2. 遇到 429 → 轮换到池中下一个模型（不等待）
-        3. 池中所有模型都 429 → 切到回退 provider（不等待）
+        2. 遇到 429/认证错误 → 轮换到池中下一个模型（不等待）
+        3. 池中所有模型都失败 → 切到回退模型池（不等待）
         4. 回退也失败 → 等待后重试
         """
         import time
@@ -267,36 +286,37 @@ class LLMManager:
             except Exception as e:
                 err_str = str(e)
                 is_rate_limit = self._is_rate_limit_error(err_str)
+                is_auth = self._is_auth_error(err_str)
+                should_fallback = is_rate_limit or is_auth
 
-                if is_rate_limit:
-                    # --- 429: 尝试池中其他模型 ---
-                    if len(self.model_pool) > 1:
+                if should_fallback:
+                    reason = "认证失败" if is_auth else "限流"
+                    # --- 429/auth: 尝试池中其他模型（auth 错误跳过同 provider） ---
+                    if not is_auth and len(self.model_pool) > 1:
                         for offset in range(1, len(self.model_pool)):
                             next_idx = (self._pool_index + offset) % len(self.model_pool)
                             next_provider = self.model_pool[next_idx]
                             logger.warning(
-                                f"模型 {self.current_provider.model_name} 限流，"
+                                f"模型 {self.current_provider.model_name} {reason}，"
                                 f"轮换到 {next_provider.model_name}"
                             )
                             try:
                                 response = next_provider.call(prompt, input_data, **kwargs)
-                                # 成功，切换当前指针
                                 self._pool_index = next_idx
                                 self.current_provider = next_provider
                                 return response.content
                             except Exception as pool_e:
                                 if self._is_rate_limit_error(str(pool_e)):
-                                    continue  # 这个也限流了，试下一个
-                                # 非限流错误，跳出池轮换
+                                    continue
                                 logger.warning(f"模型 {next_provider.model_name} 失败: {str(pool_e)[:200]}")
                                 break
 
-                    # --- 主池全部限流，尝试百炼模型池 ---
+                    # --- 主池失败，尝试回退模型池 ---
                     if self.fallback_pool:
                         for offset in range(len(self.fallback_pool)):
                             idx = (self._fallback_pool_index + offset) % len(self.fallback_pool)
                             bp = self.fallback_pool[idx]
-                            logger.warning(f"主模型池限流，尝试百炼 {bp.model_name}")
+                            logger.warning(f"主模型池{reason}，尝试回退 {bp.model_name}")
                             try:
                                 response = bp.call(prompt, input_data, **kwargs)
                                 self._fallback_pool_index = (idx + 1) % len(self.fallback_pool)
@@ -304,12 +324,12 @@ class LLMManager:
                             except Exception as bp_e:
                                 if self._is_rate_limit_error(str(bp_e)):
                                     continue
-                                logger.warning(f"百炼 {bp.model_name} 失败: {str(bp_e)[:200]}")
+                                logger.warning(f"回退 {bp.model_name} 失败: {str(bp_e)[:200]}")
                                 break
 
-                    # --- 百炼也失败，切到最终兜底 provider ---
+                    # --- 回退池也失败，切到最终兜底 provider ---
                     if self.fallback_provider:
-                        logger.warning(f"所有模型池限流，切换到兜底 provider")
+                        logger.warning(f"所有模型池失败，切换到兜底 provider")
                         try:
                             response = self.fallback_provider.call(prompt, input_data, **kwargs)
                             return response.content
@@ -320,6 +340,11 @@ class LLMManager:
                 if attempt == max_retries - 1:
                     logger.error(f"LLM调用在{max_retries}次重试后彻底失败。")
                     raise
+
+                # --- 认证错误不需要等待重试（换 provider 就行），直接进入下一轮 ---
+                if is_auth:
+                    logger.warning(f"主 provider 认证失败，直接重试 ({attempt + 1}/{max_retries})")
+                    continue
 
                 # --- 等待后重试 ---
                 wait_time = 2 ** attempt
