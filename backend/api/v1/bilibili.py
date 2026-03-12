@@ -299,48 +299,22 @@ async def process_download_task(task_id: str, request: BilibiliDownloadRequest, 
         # 更新项目进度
         await update_project_download_progress(project_id, 60.0, "视频下载完成，正在处理字幕...")
         
-        # 如果没有字幕文件，优先使用Whisper生成字幕
+        # 如果没有字幕文件，使用火山引擎 ASR 生成字幕
         if not subtitle_path and video_path:
-            logger.info("优先使用Whisper生成高质量字幕")
-            # 更新项目进度
-            await update_project_download_progress(project_id, 70.0, "正在使用Whisper生成字幕...")
-            
+            await update_project_download_progress(project_id, 70.0, "正在使用 ASR 生成字幕...")
             try:
                 from ...utils.speech_recognizer import generate_subtitle_for_video, SpeechRecognitionError
                 from pathlib import Path
-                video_file_path = Path(video_path)
-                
-                # 根据视频信息选择合适的模型，但始终使用自动语言检测
-                model = "base"  # 默认使用平衡模型
-                language = "auto"  # 始终使用自动语言检测
-                
-                # 可以根据视频标题或描述判断内容类型，选择不同的模型大小
-                if video_info.title and any(keyword in video_info.title.lower() for keyword in ['教程', '教学', '知识', '科普']):
-                    model = "small"  # 知识类内容使用更准确的模型
-                elif video_info.title and any(keyword in video_info.title.lower() for keyword in ['演讲', '讲座', '分享']):
-                    model = "medium"  # 演讲内容使用高精度模型
-                
-                logger.info(f"使用Whisper生成字幕 - 语言: {language}, 模型: {model}")
-                
-                generated_subtitle = generate_subtitle_for_video(
-                    video_file_path,
-                    language=language,
-                    model=model
-                )
+                generated_subtitle = generate_subtitle_for_video(Path(video_path))
                 subtitle_path = str(generated_subtitle)
-                logger.info(f"Whisper字幕生成成功: {subtitle_path}")
-                
-                # 更新项目进度
+                logger.info(f"ASR 字幕生成成功: {subtitle_path}")
                 await update_project_download_progress(project_id, 90.0, "字幕生成完成，正在准备处理...")
-                
             except SpeechRecognitionError as e:
-                logger.error(f"Whisper字幕生成失败: {e}")
-                # Whisper失败时，标记项目为失败状态
-                logger.error("字幕文件不存在且Whisper生成失败，项目将标记为失败状态")
-                subtitle_path = None  # 确保字幕路径为空，后续会标记项目失败
+                logger.error(f"ASR 字幕生成失败: {e}")
+                subtitle_path = None
             except Exception as e:
                 logger.error(f"生成字幕过程中发生未知错误: {e}")
-                subtitle_path = None  # 确保字幕路径为空，后续会标记项目失败
+                subtitle_path = None
         
         download_tasks[task_id].progress = 80.0
         
@@ -423,12 +397,12 @@ async def process_download_task(task_id: str, request: BilibiliDownloadRequest, 
                 project.status = ProjectStatus.FAILED
                 if not project.processing_config:
                     project.processing_config = {}
-                project.processing_config["error_message"] = "字幕文件不存在且Whisper生成失败"
+                project.processing_config["error_message"] = "字幕文件不存在且ASR生成失败"
                 db.commit()
                 
                 # 更新任务状态为失败
                 download_tasks[task_id].status = "failed"
-                download_tasks[task_id].error_message = "字幕文件不存在且Whisper生成失败"
+                download_tasks[task_id].error_message = "字幕文件不存在且ASR生成失败"
                 download_tasks[task_id].progress = 0.0
                 download_tasks[task_id].project_id = str(project.id)
                 download_tasks[task_id].updated_at = datetime.now().isoformat()

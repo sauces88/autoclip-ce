@@ -16,12 +16,12 @@ export const ProjectTaskManager: React.FC<ProjectTaskManagerProps> = ({
   projectId, 
   projectName 
 }) => {
-  const { getAllTasks, loading } = useTaskStatus()
+  const { tasks, loading } = useTaskStatus()
   const [selectedTask, setSelectedTask] = useState<TaskStatusType | null>(null)
   const [taskDetailVisible, setTaskDetailVisible] = useState(false)
 
   // 获取当前项目的任务
-  const projectTasks = getAllTasks().filter(task => task.project_id === projectId)
+  const projectTasks = tasks.filter(task => task.project_id === projectId)
   const activeTasks = projectTasks.filter(task => 
     task.status === 'running' || task.status === 'pending'
   )

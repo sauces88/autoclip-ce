@@ -15,15 +15,10 @@ import {
 import { 
   ArrowLeftOutlined, 
   PlayCircleOutlined,
-  PlusOutlined
 } from '@ant-design/icons'
-import { useProjectStore, Project, Clip } from '../store/useProjectStore'
+import { useProjectStore, Clip } from '../store/useProjectStore'
 import { projectApi } from '../services/api'
 import ClipCard from '../components/ClipCard'
-import CollectionCard from '../components/CollectionCard'
-import CollectionPreviewModal from '../components/CollectionPreviewModal'
-import CreateCollectionModal from '../components/CreateCollectionModal'
-import { useCollectionVideoDownload } from '../hooks/useCollectionVideoDownload'
 import { ProjectTaskManager } from '../components/ProjectTaskManager'
 // import { useWebSocket, WebSocketEventMessage } from '../hooks/useWebSocket'  // 已禁用WebSocket系统
 
@@ -38,20 +33,10 @@ const ProjectDetailPage: React.FC = () => {
     loading, 
     error,
     setCurrentProject,
-    updateCollection,
-    addCollection,
-    deleteCollection,
-    removeClipFromCollection,
-    reorderCollectionClips,
-    addClipToCollection
   } = useProjectStore()
   
   const [statusLoading, setStatusLoading] = useState(false)
-  const [showCreateCollection, setShowCreateCollection] = useState(false)
   const [sortBy, setSortBy] = useState<'time' | 'score'>('score')
-  const [showCollectionDetail, setShowCollectionDetail] = useState(false)
-  const [selectedCollection, setSelectedCollection] = useState<any>(null)
-  const { generateAndDownloadCollectionVideo } = useCollectionVideoDownload()
 
   // WebSocket连接已禁用，使用新的简化进度系统
   // const handleWebSocketMessage = (message: WebSocketEventMessage) => {
@@ -101,13 +86,10 @@ const ProjectDetailPage: React.FC = () => {
 
   useEffect(() => {
     if (id) {
-      // 只有当store中没有currentProject或者currentProject的id与当前id不匹配时才重新加载
-      if (!currentProject || currentProject.id !== id) {
-        loadProject()
-      }
+      loadProject()
       loadProcessingStatus()
     }
-  }, [id, currentProject])
+  }, [id])
 
   const loadProject = async () => {
     if (!id) return
@@ -178,75 +160,6 @@ const ProjectDetailPage: React.FC = () => {
     }
   }
 
-  const handleCreateCollection = async (title: string, summary: string, clipIds: string[]) => {
-    if (!id) return
-    try {
-      await addCollection(id, {
-        id: `collection_${Date.now()}`,
-        collection_title: title,
-        collection_summary: summary,
-        clip_ids: clipIds,
-        collection_type: 'manual',
-        created_at: new Date().toISOString()
-      })
-      setShowCreateCollection(false)
-      message.success('合集创建成功')
-    } catch (error) {
-      console.error('Failed to create collection:', error)
-      message.error('创建合集失败')
-    }
-  }
-
-  const handleViewCollection = (collection: any) => {
-    setSelectedCollection(collection)
-    setShowCollectionDetail(true)
-  }
-
-  const handleRemoveClipFromCollection = async (collectionId: string, clipId: string): Promise<void> => {
-    if (!id) return
-    try {
-      await removeClipFromCollection(id, collectionId, clipId)
-      message.success('切片已从合集中移除')
-    } catch (error) {
-      console.error('Failed to remove clip from collection:', error)
-      message.error('移除切片失败')
-    }
-  }
-
-  const handleDeleteCollection = async (collectionId: string) => {
-    if (!id) return
-    try {
-      await deleteCollection(id, collectionId)
-      setShowCollectionDetail(false)
-      setSelectedCollection(null)
-      message.success('合集已删除')
-    } catch (error) {
-      console.error('Failed to delete collection:', error)
-      message.error('删除合集失败')
-    }
-  }
-
-  const handleReorderCollectionClips = async (collectionId: string, newClipIds: string[]): Promise<void> => {
-    if (!id) return
-    try {
-      await reorderCollectionClips(id, collectionId, newClipIds)
-      message.success('合集顺序已更新')
-    } catch (error) {
-      console.error('Failed to reorder collection clips:', error)
-      message.error('更新合集顺序失败')
-    }
-  }
-
-  const handleAddClipToCollection = async (collectionId: string, clipIds: string[]): Promise<void> => {
-    if (!id) return
-    try {
-      await addClipToCollection(id, collectionId, clipIds)
-      message.success('切片已添加到合集')
-    } catch (error) {
-      console.error('Failed to add clip to collection:', error)
-      message.error('添加切片失败')
-    }
-  }
 
   const getSortedClips = () => {
     if (!currentProject?.clips) return []
@@ -331,76 +244,6 @@ const ProjectDetailPage: React.FC = () => {
       {/* 主要内容 */}
       {currentProject.status === 'completed' ? (
         <div>
-          {/* AI合集横向滚动区域 */}
-          {currentProject.collections && currentProject.collections.length > 0 && (
-            <Card style={{ marginBottom: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div>
-                  <Title level={4} style={{ margin: 0 }}>AI推荐合集</Title>
-                  <Text type="secondary">
-                    AI 已为您推荐了 {currentProject.collections.length} 个主题合集
-                  </Text>
-                </div>
-                <Button 
-                  type="primary" 
-                  icon={<PlusOutlined />}
-                  onClick={() => setShowCreateCollection(true)}
-                  style={{
-                    borderRadius: '8px',
-                    background: 'linear-gradient(45deg, #1890ff, #36cfc9)',
-                    border: 'none',
-                    fontWeight: 500,
-                    height: '40px',
-                    padding: '0 20px',
-                    fontSize: '14px'
-                  }}
-                >
-                  创建合集
-                </Button>
-              </div>
-              
-              <div 
-                className="collections-scroll-container"
-                style={{ 
-                  display: 'flex',
-                  gap: '16px',
-                  overflowX: 'auto',
-                  paddingBottom: '8px'
-                }}
-              >
-                {currentProject.collections
-                  .sort((a, b) => {
-                    // 按创建时间倒序排列，最新的在前面
-                    const timeA = a.created_at ? new Date(a.created_at).getTime() : 0
-                    const timeB = b.created_at ? new Date(b.created_at).getTime() : 0
-                    return timeB - timeA
-                  })
-                  .map((collection) => (
-                  <CollectionCard
-                    key={collection.id}
-                    collection={collection}
-                    clips={currentProject.clips || []}
-                    onView={handleViewCollection}
-                    onUpdate={(collectionId, updates) => 
-                      updateCollection(currentProject.id, collectionId, updates)
-                    }
-                    onGenerateVideo={async (collectionId) => {
-                      const collection = currentProject.collections?.find(c => c.id === collectionId)
-                      if (collection) {
-                        await generateAndDownloadCollectionVideo(
-                          currentProject.id, 
-                          collectionId, 
-                          collection.collection_title
-                        )
-                      }
-                    }}
-                    onDelete={handleDeleteCollection}
-                  />
-                ))}
-              </div>
-            </Card>
-          )}
-          
           {/* 视频片段区域 */}
           <Card 
             style={{
@@ -473,26 +316,6 @@ const ProjectDetailPage: React.FC = () => {
                   </Radio.Group>
                 </div>
                 
-                <Space>
-                  {(!currentProject.collections || currentProject.collections.length === 0) && (
-                    <Button 
-                      type="primary" 
-                      icon={<PlusOutlined />}
-                      onClick={() => setShowCreateCollection(true)}
-                      style={{
-                        borderRadius: '8px',
-                        background: 'linear-gradient(45deg, #1890ff, #36cfc9)',
-                        border: 'none',
-                        fontWeight: 500,
-                        height: '40px',
-                        padding: '0 20px',
-                        fontSize: '14px'
-                      }}
-                    >
-                      创建合集
-                    </Button>
-                  )}
-                </Space>
               </div>
             </div>
             
@@ -561,7 +384,7 @@ const ProjectDetailPage: React.FC = () => {
                 <div>
                   <Text>项目还未完成处理</Text>
                   <br />
-                  <Text type="secondary">处理完成后可查看视频片段和AI合集</Text>
+                  <Text type="secondary">处理完成后可查看视频片段</Text>
                 </div>
               }
             />
@@ -569,32 +392,6 @@ const ProjectDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* 创建合集模态框 */}
-      <CreateCollectionModal
-        visible={showCreateCollection}
-        clips={currentProject.clips || []}
-        onCancel={() => setShowCreateCollection(false)}
-        onCreate={handleCreateCollection}
-      />
-      
-      {/* 合集预览模态框 */}
-      <CollectionPreviewModal
-        visible={showCollectionDetail}
-        collection={selectedCollection}
-        clips={currentProject.clips || []}
-        projectId={currentProject.id}
-        onClose={() => {
-          setShowCollectionDetail(false)
-          setSelectedCollection(null)
-        }}
-        onUpdateCollection={(collectionId, updates) => 
-          updateCollection(currentProject.id, collectionId, updates)
-        }
-        onRemoveClip={handleRemoveClipFromCollection}
-        onReorderClips={handleReorderCollectionClips}
-        onDelete={handleDeleteCollection}
-        onAddClip={handleAddClipToCollection}
-      />
 
     </Content>
   )

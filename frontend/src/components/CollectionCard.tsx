@@ -62,7 +62,7 @@ const CollectionCard: React.FC<CollectionCardProps> = ({
           style={{ 
             height: '200px', 
             background: collection.thumbnail_path 
-              ? `url(http://localhost:8000/api/v1/projects/${collection.project_id}/collections/${collection.id}/thumbnail) center/cover` 
+              ? `url(/api/v1/projects/${collection.project_id}/collections/${collection.id}/thumbnail) center/cover`
               : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             display: 'flex',
             alignItems: 'center',
@@ -211,7 +211,7 @@ const CollectionCard: React.FC<CollectionCardProps> = ({
             <Tooltip 
               title={collection.collection_summary || '暂无描述'} 
               placement="top" 
-              overlayStyle={{ maxWidth: '300px' }}
+              styles={{ root: { maxWidth: '300px' } }}
               mouseEnterDelay={0.5}
             >
               <div 

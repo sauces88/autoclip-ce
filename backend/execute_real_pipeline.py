@@ -137,12 +137,14 @@ async def execute_real_pipeline(project_id: str):
         # 尝试更新任务状态
         try:
             db = SessionLocal()
-            task = db.query(Task).filter(Task.project_id == project_id).order_by(Task.created_at.desc()).first()
-            if task:
-                task.status = TaskStatus.FAILED
-                task.error_message = error_msg
-                db.commit()
-            db.close()
+            try:
+                task = db.query(Task).filter(Task.project_id == project_id).order_by(Task.created_at.desc()).first()
+                if task:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = error_msg
+                    db.commit()
+            finally:
+                db.close()
         except Exception as db_error:
             logger.error(f"更新任务状态失败: {db_error}")
         

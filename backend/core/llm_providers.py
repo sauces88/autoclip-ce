@@ -19,6 +19,8 @@ class ProviderType(Enum):
     OPENAI = "openai"        # OpenAI
     GEMINI = "gemini"        # Google Gemini
     SILICONFLOW = "siliconflow"  # 硅基流动
+    BAILIAN = "bailian"      # 阿里云百炼（OpenAI 兼容）
+    TENCENT = "tencent"      # 腾讯云 Coding Plan（OpenAI 兼容）
 
 @dataclass
 class ModelInfo:
@@ -91,50 +93,38 @@ class LLMProvider(ABC):
         return prompt
 
 class DashScopeProvider(LLMProvider):
-    """阿里DashScope提供商"""
-    
-    def __init__(self, api_key: str, model_name: str = "qwen-plus", **kwargs):
+    """阿里DashScope提供商（OpenAI兼容模式）"""
+
+    DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def __init__(self, api_key: str, model_name: str = "qwen3.5-plus", **kwargs):
         super().__init__(api_key, model_name, **kwargs)
         try:
-            from dashscope import Generation
-            self.generation = Generation
+            from openai import OpenAI
+            self.client = OpenAI(api_key=api_key, base_url=self.DASHSCOPE_BASE_URL)
         except ImportError:
-            raise ImportError("请安装dashscope: pip install dashscope")
-    
+            raise ImportError("请安装openai: pip install openai")
+
     def call(self, prompt: str, input_data: Any = None, **kwargs) -> LLMResponse:
-        """调用DashScope API"""
+        """调用DashScope API（OpenAI兼容模式）"""
         try:
             full_input = self._build_full_input(prompt, input_data)
-            
-            response_or_gen = self.generation.call(
+            # 过滤掉不兼容的参数
+            kwargs.pop("stream", None)
+
+            response = self.client.chat.completions.create(
                 model=self.model_name,
-                prompt=full_input,
-                api_key=self.api_key,
-                stream=False,
+                messages=[{"role": "user", "content": full_input}],
                 **kwargs
             )
-            
-            # 处理响应
-            # DashScope的GenerationResponse虽然有__iter__方法，但不是真正的迭代器
-            # 直接使用响应对象本身
-            response = response_or_gen
-            
-            if response and response.status_code == 200:
-                if response.output and response.output.text is not None:
-                    return LLMResponse(
-                        content=response.output.text,
-                        model=self.model_name,
-                        finish_reason=getattr(response.output, 'finish_reason', None)
-                    )
-                else:
-                    finish_reason = getattr(response.output, 'finish_reason', 'unknown') if response.output else 'unknown'
-                    logger.warning(f"API请求成功，但输出为空。结束原因: {finish_reason}")
-                    return LLMResponse(content="")
-            else:
-                code = getattr(response, 'code', 'N/A')
-                message = getattr(response, 'message', '未知API错误')
-                raise Exception(f"API调用失败 - Status: {response.status_code}, Code: {code}, Message: {message}")
-                
+
+            content = response.choices[0].message.content or ""
+            finish_reason = response.choices[0].finish_reason
+            return LLMResponse(
+                content=content,
+                model=self.model_name,
+                finish_reason=finish_reason
+            )
         except Exception as e:
             logger.error(f"DashScope调用失败: {str(e)}")
             raise
@@ -175,13 +165,17 @@ class DashScopeProvider(LLMProvider):
         ]
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI提供商"""
-    
+    """OpenAI提供商（支持自定义 base_url，兼容第三方 API）"""
+
     def __init__(self, api_key: str, model_name: str = "gpt-3.5-turbo", **kwargs):
         super().__init__(api_key, model_name, **kwargs)
+        base_url = kwargs.get("base_url")
         try:
             import openai
-            self.client = openai.OpenAI(api_key=api_key)
+            client_kwargs = {"api_key": api_key}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            self.client = openai.OpenAI(**client_kwargs)
         except ImportError:
             raise ImportError("请安装openai: pip install openai")
     
@@ -255,7 +249,10 @@ class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash", **kwargs):
         super().__init__(api_key, model_name, **kwargs)
         try:
-            import google.generativeai as genai
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                import google.generativeai as genai
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(model_name)
         except ImportError:
@@ -275,7 +272,7 @@ class GeminiProvider(LLMProvider):
             )
             
         except Exception as e:
-            logger.error(f"Gemini调用失败: {str(e)}")
+            logger.error(f"Gemini调用失败: {str(e).splitlines()[0][:150]}")
             raise
     
     def test_connection(self) -> bool:
@@ -405,14 +402,126 @@ class SiliconFlowProvider(LLMProvider):
             )
         ]
 
+class BailianProvider(LLMProvider):
+    """阿里云百炼提供商（OpenAI 兼容协议）"""
+
+    def __init__(self, api_key: str, model_name: str = "qwen3-coder-plus", **kwargs):
+        super().__init__(api_key, model_name, **kwargs)
+        base_url = kwargs.get("base_url", "https://coding.dashscope.aliyuncs.com/v1")
+        try:
+            import openai
+            self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        except ImportError:
+            raise ImportError("请安装openai: pip install openai")
+
+    def call(self, prompt: str, input_data: Any = None, **kwargs) -> LLMResponse:
+        try:
+            full_input = self._build_full_input(prompt, input_data)
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": full_input}],
+            )
+            content = response.choices[0].message.content or ""
+            return LLMResponse(
+                content=content,
+                model=self.model_name,
+                finish_reason=response.choices[0].finish_reason,
+            )
+        except Exception as e:
+            logger.error(f"百炼调用失败 [{self.model_name}]: {str(e)[:200]}")
+            raise
+
+    def test_connection(self) -> bool:
+        try:
+            response = self.call("请回复'测试成功'")
+            return "测试成功" in response.content or "success" in response.content.lower()
+        except Exception as e:
+            logger.error(f"百炼连接测试失败: {e}")
+            return False
+
+    def get_available_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(name="qwen3-coder-plus", display_name="Qwen3 Coder Plus",
+                      provider=ProviderType.BAILIAN, max_tokens=131072, description="百炼 Qwen3 Coder Plus"),
+            ModelInfo(name="glm-5", display_name="GLM-5",
+                      provider=ProviderType.BAILIAN, max_tokens=131072, description="百炼 GLM-5"),
+            ModelInfo(name="glm-4.7", display_name="GLM-4.7",
+                      provider=ProviderType.BAILIAN, max_tokens=131072, description="百炼 GLM-4.7"),
+            ModelInfo(name="kimi-k2.5", display_name="Kimi K2.5",
+                      provider=ProviderType.BAILIAN, max_tokens=131072, description="百炼 Kimi K2.5"),
+            ModelInfo(name="MiniMax-M2.5", display_name="MiniMax M2.5",
+                      provider=ProviderType.BAILIAN, max_tokens=131072, description="百炼 MiniMax M2.5"),
+        ]
+
+
+class TencentProvider(LLMProvider):
+    """腾讯云 Coding Plan 提供商（OpenAI 兼容协议）"""
+
+    def __init__(self, api_key: str, model_name: str = "hunyuan-turbos", **kwargs):
+        super().__init__(api_key, model_name, **kwargs)
+        base_url = kwargs.get("base_url", "https://api.lkeap.cloud.tencent.com/coding/v3")
+        try:
+            import openai
+            self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        except ImportError:
+            raise ImportError("请安装openai: pip install openai")
+
+    def call(self, prompt: str, input_data: Any = None, **kwargs) -> LLMResponse:
+        try:
+            full_input = self._build_full_input(prompt, input_data)
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": full_input}],
+            )
+            content = response.choices[0].message.content or ""
+            return LLMResponse(
+                content=content,
+                model=self.model_name,
+                finish_reason=response.choices[0].finish_reason,
+            )
+        except Exception as e:
+            logger.error(f"腾讯云调用失败 [{self.model_name}]: {str(e)[:200]}")
+            raise
+
+    def test_connection(self) -> bool:
+        try:
+            response = self.call("请回复'测试成功'")
+            return "测试成功" in response.content or "success" in response.content.lower()
+        except Exception as e:
+            logger.error(f"腾讯云连接测试失败: {e}")
+            return False
+
+    def get_available_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(name="hunyuan-turbos", display_name="Hunyuan TurboS",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="腾讯混元 TurboS"),
+            ModelInfo(name="hunyuan-2.0-instruct", display_name="Hunyuan 2.0 Instruct",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="腾讯混元 2.0 Instruct"),
+            ModelInfo(name="hunyuan-2.0-thinking", display_name="Hunyuan 2.0 Think",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="腾讯混元 2.0 Think"),
+            ModelInfo(name="kimi-k2.5", display_name="Kimi K2.5",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="Kimi K2.5"),
+            ModelInfo(name="minimax-m2.5", display_name="MiniMax M2.5",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="MiniMax M2.5"),
+            ModelInfo(name="glm-5", display_name="GLM-5",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="GLM-5"),
+            ModelInfo(name="hunyuan-t1", display_name="Hunyuan T1",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="腾讯混元 T1"),
+            ModelInfo(name="tc-code-latest", display_name="Auto (智能匹配)",
+                      provider=ProviderType.TENCENT, max_tokens=131072, description="算法自动匹配最优模型"),
+        ]
+
+
 class LLMProviderFactory:
     """LLM提供商工厂"""
-    
+
     _providers = {
         ProviderType.DASHSCOPE: DashScopeProvider,
         ProviderType.OPENAI: OpenAIProvider,
         ProviderType.GEMINI: GeminiProvider,
         ProviderType.SILICONFLOW: SiliconFlowProvider,
+        ProviderType.BAILIAN: BailianProvider,
+        ProviderType.TENCENT: TencentProvider,
     }
     
     @classmethod

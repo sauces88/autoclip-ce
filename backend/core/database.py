@@ -39,11 +39,13 @@ if "sqlite" in DATABASE_URL:
         echo=False  # 设置为True可以看到SQL语句
     )
 else:
-    # PostgreSQL配置
+    # MySQL/PostgreSQL配置
     engine = create_engine(
         DATABASE_URL,
         pool_pre_ping=True,
         pool_recycle=300,
+        pool_size=20,
+        max_overflow=100,
         echo=False
     )
 

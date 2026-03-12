@@ -8,16 +8,18 @@ from .clip import Clip
 from .collection import Collection
 from .task import Task, TaskStatus, TaskType
 from .bilibili import BilibiliAccount, UploadRecord
+from .asr_cache import ASRCache
 
 __all__ = [
     "Base",
-    "TimestampMixin", 
+    "TimestampMixin",
     "Project",
-    "Clip", 
+    "Clip",
     "Collection",
     "Task",
     "TaskStatus",
     "TaskType",
     "BilibiliAccount",
-    "UploadRecord"
+    "UploadRecord",
+    "ASRCache",
 ]

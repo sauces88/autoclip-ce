@@ -1,4 +1,5 @@
 import { SubtitleSegment } from '../types/subtitle'
+import { SrtEntry, SubtitlePreset } from '../types/subtitle'
 
 export interface SubtitleDataResponse {
   segments: SubtitleSegment[]
@@ -195,6 +196,87 @@ class SubtitleEditorApi {
         error: `验证失败: ${error instanceof Error ? error.message : '未知错误'}`
       }
     }
+  }
+
+  /**
+   * 获取clip的SRT条目（纠错后）
+   */
+  async getSrtEntries(projectId: string, clipId: string): Promise<SrtEntry[]> {
+    const response = await fetch(`${this.baseUrl}/${projectId}/clips/${clipId}/subtitles`)
+    if (!response.ok) {
+      throw new Error(`获取字幕条目失败: ${response.statusText}`)
+    }
+    return response.json()
+  }
+
+  /**
+   * 保存SRT条目到后端
+   */
+  async saveSrtEntries(projectId: string, clipId: string, entries: SrtEntry[]): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/${projectId}/clips/${clipId}/subtitles`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entries),
+    })
+    if (!response.ok) {
+      throw new Error(`保存字幕失败: ${response.statusText}`)
+    }
+  }
+
+  /**
+   * 获取字幕样式预设列表
+   */
+  async getPresets(projectId: string, clipId: string): Promise<SubtitlePreset[]> {
+    const response = await fetch(`${this.baseUrl}/${projectId}/clips/${clipId}/presets`)
+    if (!response.ok) {
+      return []
+    }
+    return response.json()
+  }
+
+  /**
+   * 烧录字幕到视频
+   */
+  async burnSubtitles(
+    projectId: string,
+    clipId: string,
+    presetId: string,
+    styleOverrides?: {
+      outline?: number
+      shadow?: number
+      bold?: number
+      color?: string
+      outline_color?: string
+      font_size_ratio?: number
+    }
+  ): Promise<{ success: boolean; task_id?: string; message?: string }> {
+    const body: Record<string, unknown> = { preset_id: presetId }
+    if (styleOverrides) {
+      if (styleOverrides.outline !== undefined) body.custom_outline = styleOverrides.outline
+      if (styleOverrides.shadow !== undefined) body.custom_shadow = styleOverrides.shadow
+      if (styleOverrides.bold !== undefined) body.custom_bold = styleOverrides.bold
+      if (styleOverrides.color) body.custom_color = styleOverrides.color
+      if (styleOverrides.outline_color) body.custom_outline_color = styleOverrides.outline_color
+      if (styleOverrides.font_size_ratio !== undefined) body.custom_font_size_ratio = styleOverrides.font_size_ratio
+    }
+    const response = await fetch(`${this.baseUrl}/${projectId}/clips/${clipId}/burn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(`烧录失败: ${err}`)
+    }
+    return response.json()
+  }
+
+  async getBurnStatus(projectId: string, clipId: string): Promise<{ burn_status: string }> {
+    const response = await fetch(`${this.baseUrl}/${projectId}/clips/${clipId}/burn-status`)
+    if (!response.ok) {
+      return { burn_status: 'none' }
+    }
+    return response.json()
   }
 }
 

@@ -1,6 +1,36 @@
 {
-  "dashscope_api_key": "sk-1280fee632a541c1a69d3873f850358b",
-  "model_name": "qwen-plus",
+  "llm_provider": "gemini",
+  "dashscope_api_key": "",
+  "openai_api_key": "",
+  "openai_base_url": "",
+  "gemini_api_key": "AIzaSyASLJPXbK4zCgRYmLYzlucVbMBFC2Cj3gQ",
+  "siliconflow_api_key": "",
+  "bailian_api_key": "sk-sp-e0e43ab99a0145f39c87624656614f56",
+  "bailian_base_url": "https://coding.dashscope.aliyuncs.com/v1",
+  "bailian_model_pool": [
+    "kimi-k2.5",
+    "MiniMax-M2.5",
+    "glm-4.7",
+    "qwen3-coder-plus",
+    "qwen3-coder-next",
+    "glm-5"
+  ],
+  "model_name": "gemini-3.1-flash-lite-preview",
+  "gemini_model_pool": [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview"
+  ],
+  "tencent_api_key": "sk-sp-EDMf6dsIjaRacfxOUFQGwu3KHz3YGOroz3J6HBOMt3Nd5JHZ",
+  "tencent_base_url": "https://api.lkeap.cloud.tencent.com/coding/v3",
+  "tencent_model_pool": [
+    "hunyuan-turbos",
+    "kimi-k2.5",
+    "minimax-m2.5",
+    "hunyuan-t1",
+    "glm-5"
+  ],
+  "llm_fallback_provider": "",
+  "fallback_model_name": "",
   "chunk_size": 5000,
   "min_score_threshold": 0.7,
   "max_clips_per_collection": 5

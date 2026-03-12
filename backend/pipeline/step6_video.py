@@ -20,19 +20,16 @@ class VideoGenerator:
         # 强制使用项目内专属目录，不使用全局目录作为后备
         if not clips_dir:
             raise ValueError("clips_dir 参数是必需的，不能使用全局路径")
-        if not collections_dir:
-            raise ValueError("collections_dir 参数是必需的，不能使用全局路径")
-        
+
         self.clips_dir = Path(clips_dir)
-        self.collections_dir = Path(collections_dir)
+        self.collections_dir = Path(collections_dir) if collections_dir else None
         self.metadata_dir = Path(metadata_dir) if metadata_dir else METADATA_DIR
-        
+
         # 确保目录存在
         self.clips_dir.mkdir(parents=True, exist_ok=True)
-        self.collections_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 创建VideoProcessor实例，强制使用项目内路径
-        self.video_processor = VideoProcessor(clips_dir=str(self.clips_dir), collections_dir=str(self.collections_dir))
+        self.video_processor = VideoProcessor(clips_dir=str(self.clips_dir), collections_dir=collections_dir)
     
     def generate_clips(self, clips_with_titles: List[Dict], input_video: Path) -> List[Path]:
         """
@@ -161,13 +158,18 @@ def run_step6_video(clips_with_titles_path: Path, collections_path: Path,
     
     # 生成切片视频
     successful_clips = generator.generate_clips(clips_with_titles, input_video)
-    
-    # 生成合集视频
-    successful_collections = generator.generate_collections(collections_data)
-    
-    # 保存元数据到项目目录
-    # 注意：clips_metadata.json在这里保存，包含最终的切片元数据（包含视频路径等信息）
-    # 这与step4的step4_titles.json不同，step4只保存带标题的片段数据
+
+    # 把实际写到磁盘的路径存入每条 clip 数据，后续直接用，不再重新构造
+    from ..utils.video_processor import VideoProcessor as _VP
+    _clips_dir = Path(clips_dir) if clips_dir else generator.clips_dir
+    for clip in clips_with_titles:
+        _cid = clip['id']
+        _safe = _VP.sanitize_filename(clip.get('generated_title', f"片段_{_cid}"))
+        _path = _clips_dir / f"{_cid}_{_safe}.mp4"
+        if _path.exists():
+            clip['video_path'] = str(_path)
+
+    # 保存元数据（现在 clips_with_titles 里已包含 video_path）
     if metadata_dir:
         project_metadata_dir = Path(metadata_dir)
         generator.save_clip_metadata(clips_with_titles, project_metadata_dir / "clips_metadata.json")
@@ -179,12 +181,12 @@ def run_step6_video(clips_with_titles_path: Path, collections_path: Path,
     # 返回结果信息
     result = {
         'clips_generated': len(successful_clips),
-        'collections_generated': len(successful_collections),
+        'collections_generated': 0,
         'clip_paths': [str(path) for path in successful_clips],
-        'collection_paths': [str(path) for path in successful_collections]
+        'collection_paths': []
     }
-    
-    logger.info(f"视频生成完成: {result['clips_generated']}个切片, {result['collections_generated']}个合集")
+
+    logger.info(f"视频生成完成: {result['clips_generated']}个切片")
     
     # 保存结果到输出文件
     if output_dir is not None:

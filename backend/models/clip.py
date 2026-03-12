@@ -16,6 +16,13 @@ class ClipStatus(str, enum.Enum):
     COMPLETED = "completed"       # 已完成
     FAILED = "failed"            # 失败
 
+class BurnStatus(str, enum.Enum):
+    """字幕烧录状态枚举"""
+    NONE = "none"           # 未烧录
+    BURNING = "burning"     # 烧录中
+    DONE = "done"           # 烧录完成
+    FAILED = "failed"       # 烧录失败
+
 class Clip(BaseModel):
     """切片模型"""
     
@@ -101,6 +108,20 @@ class Clip(BaseModel):
         comment="切片元数据（精简版，完整数据存储在文件系统）"
     )
     
+    # 字幕烧录状态
+    burn_status = Column(
+        String(20),
+        default="none",
+        nullable=False,
+        server_default="none",
+        comment="字幕烧录状态"
+    )
+    burn_task_id = Column(
+        String(100),
+        nullable=True,
+        comment="Celery烧录任务ID"
+    )
+
     # 添加计算属性
     @property
     def metadata_file_path(self) -> Optional[str]:

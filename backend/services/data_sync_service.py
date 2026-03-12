@@ -8,7 +8,6 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from sqlalchemy.orm import Session
 from backend.models.clip import Clip, ClipStatus
-from backend.models.collection import Collection, CollectionStatus
 from backend.models.project import Project, ProjectStatus, ProjectType
 from backend.models.task import Task, TaskStatus, TaskType
 from datetime import datetime
@@ -104,20 +103,14 @@ class DataSyncService:
             
             # 同步切片数据
             clips_count = self._sync_clips_from_filesystem(project_id, project_dir)
-            
-            # 同步合集数据
-            logger.info(f"开始同步项目 {project_id} 的合集数据")
-            collections_count = self._sync_collections_from_filesystem(project_id, project_dir)
-            logger.info(f"项目 {project_id} 合集同步完成，同步了 {collections_count} 个合集")
-            
+
             # 检查项目是否已完成处理，更新项目状态
             self._update_project_status_if_completed(project_id, project_dir)
-            
+
             return {
                 "success": True,
                 "project_id": project_id,
                 "clips_synced": clips_count,
-                "collections_synced": collections_count
             }
             
         except Exception as e:
@@ -148,17 +141,12 @@ class DataSyncService:
         try:
             # 查找切片数据文件
             clips_files = [
-                project_dir / "step6_video" / "clips_metadata.json",  # 最完整的数据源
-                project_dir / "step3_all_scored.json",  # 优先使用正确的数据源
-                project_dir / "step4_title" / "step4_title.json",
-                project_dir / "step4_titles.json",
+                project_dir / "metadata" / "clips_metadata.json",
                 project_dir / "clips_metadata.json",
-                project_dir / "metadata" / "clips_metadata.json"
             ]
-            
+
             clips_data = None
             for clips_file in clips_files:
-                logger.info(f"检查切片文件: {clips_file}")
                 if clips_file.exists():
                     try:
                         with open(clips_file, 'r', encoding='utf-8') as f:
@@ -167,8 +155,6 @@ class DataSyncService:
                         break
                     except Exception as e:
                         logger.warning(f"读取切片文件失败 {clips_file}: {e}")
-                else:
-                    logger.info(f"切片文件不存在: {clips_file}")
             
             if not clips_data:
                 logger.info(f"项目 {project_id} 没有找到切片数据")
@@ -191,86 +177,37 @@ class DataSyncService:
                         Clip.title == clip_data.get("generated_title", clip_data.get("title", ""))
                     ).first()
                     
+                    # 解析视频路径：优先用 clips_metadata.json 中已记录的实际路径，
+                    # 否则按序号 glob 磁盘查找，最后才构造路径
+                    clip_id = clip_data.get('id', str(synced_count + 1))
+                    from ..core.path_utils import get_project_directory
+                    project_clips_dir = get_project_directory(project_id) / "output" / "clips"
+                    project_clips_dir.mkdir(parents=True, exist_ok=True)
+
+                    def _resolve_video_path(cid, data):
+                        # 1. metadata 里已有实际路径
+                        if data.get('video_path') and Path(data['video_path']).exists():
+                            return data['video_path']
+                        # 2. glob 按序号找
+                        for f in project_clips_dir.glob(f"{cid}_*.mp4"):
+                            return str(f)
+                        return None
+
                     if existing_clip:
-                        # 更新现有切片的video_path和tags，强制使用项目内输出目录
-                        clip_id = clip_data.get('id', str(synced_count + 1))
-                        safe_title = clip_data.get('generated_title', clip_data.get('title', clip_data.get('outline', '')))
-                        # 清理文件名，移除特殊字符
-                        safe_title = "".join(c for c in safe_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                        safe_title = safe_title.replace(' ', '_')
-                        
-                        # 强制使用项目内标准路径
-                        from ..core.path_utils import get_project_directory
-                        project_dir = get_project_directory(project_id)
-                        project_clips_dir = project_dir / "output" / "clips"
-                        project_clips_dir.mkdir(parents=True, exist_ok=True)
-                        project_video_path = project_clips_dir / f"{clip_id}_{safe_title}.mp4"
-                        
-                        # 兼容旧的全局输出目录，如果存在则迁移到项目目录
-                        from ..core.path_utils import get_data_directory
-                        legacy_video_path = get_data_directory() / "output" / "clips" / f"{clip_id}_{safe_title}.mp4"
-                        try:
-                            if legacy_video_path.exists() and not project_video_path.exists():
-                                import shutil
-                                shutil.copy2(legacy_video_path, project_video_path)
-                                logger.info(f"迁移旧切片文件到项目目录: {legacy_video_path} -> {project_video_path}")
-                        except Exception as _e:
-                            logger.warning(f"迁移旧切片文件失败: {legacy_video_path} -> {project_video_path}: {_e}")
-                        
-                        # 始终使用项目内路径
-                        video_path = str(project_video_path)
-                        logger.info(f"更新切片 {existing_clip.id} 的video_path: {video_path}")
-                        existing_clip.video_path = video_path
+                        video_path = _resolve_video_path(clip_id, clip_data)
+                        if video_path:
+                            existing_clip.video_path = video_path
                         if existing_clip.tags is None:
-                            existing_clip.tags = []  # 确保tags是空列表而不是null
+                            existing_clip.tags = []
                         updated_count += 1
                         continue
-                    
+
                     # 转换时间格式
                     start_time = self._convert_time_to_seconds(clip_data.get('start_time', '00:00:00'))
                     end_time = self._convert_time_to_seconds(clip_data.get('end_time', '00:00:00'))
                     duration = end_time - start_time
-                    
-                    # 构建视频文件路径，强制使用项目内目录
-                    clip_id = clip_data.get('id', str(synced_count + 1))
-                    title = clip_data.get('generated_title', clip_data.get('title', clip_data.get('outline', '')))
-                    
-                    # 强制使用项目内路径
-                    from ..core.path_utils import get_project_directory, get_data_directory
-                    project_dir = get_project_directory(project_id)
-                    project_clips_dir = project_dir / "output" / "clips"
-                    project_clips_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    # 查找实际的文件名（保留特殊字符）
-                    actual_filename = None
-                    for file_path in project_clips_dir.glob(f"{clip_id}_*.mp4"):
-                        actual_filename = file_path.name
-                        break
-                    
-                    if actual_filename:
-                        project_video_path = project_clips_dir / actual_filename
-                    else:
-                        # 如果找不到实际文件，使用清理后的文件名作为后备
-                        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                        safe_title = safe_title.replace(' ', '_')
-                        project_video_path = project_clips_dir / f"{clip_id}_{safe_title}.mp4"
-                    
-                    # 兼容旧的全局输出目录，如果存在则迁移到项目目录
-                    global_clips_dir = get_data_directory() / "output" / "clips"
-                    if actual_filename:
-                        global_video_path = global_clips_dir / actual_filename
-                    else:
-                        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                        safe_title = safe_title.replace(' ', '_')
-                        global_video_path = global_clips_dir / f"{clip_id}_{safe_title}.mp4"
-                    
-                    if global_video_path.exists() and not project_video_path.exists():
-                        import shutil
-                        shutil.copy2(global_video_path, project_video_path)
-                        logger.info(f"将切片文件从全局目录迁移到项目目录: {global_video_path} -> {project_video_path}")
-                    
-                    # 始终使用项目内路径
-                    video_path = str(project_video_path)
+
+                    video_path = _resolve_video_path(clip_id, clip_data)
                     
                     # 创建切片记录
                     clip = Clip(
@@ -519,19 +456,15 @@ class DataSyncService:
             
             # 同步clips数据
             clips_count = self._sync_clips(project_id, project_dir)
-            
-            # 同步collections数据
-            collections_count = self._sync_collections(project_id, project_dir)
-            
+
             # 更新项目统计信息
-            self._update_project_stats(project_id, clips_count, collections_count)
-            
-            logger.info(f"项目数据同步完成: {project_id}, clips: {clips_count}, collections: {collections_count}")
-            
+            self._update_project_stats(project_id, clips_count, 0)
+
+            logger.info(f"项目数据同步完成: {project_id}, clips: {clips_count}")
+
             return {
                 "success": True,
                 "clips_synced": clips_count,
-                "collections_synced": collections_count
             }
             
         except Exception as e:

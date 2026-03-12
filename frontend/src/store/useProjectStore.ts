@@ -12,6 +12,7 @@ export interface Clip {
   outline: string
   content: string[]
   chunk_index?: number  // 添加缺失字段
+  burn_status?: string  // none | burning | done | failed
 }
 
 export interface Collection {
@@ -67,7 +68,7 @@ interface ProjectStore {
   error: string | null
   lastEditTimestamp: number
   isDragging: boolean
-  
+
   // Actions
   setProjects: (projects: Project[]) => void
   setCurrentProject: (project: Project | null) => void
@@ -96,74 +97,67 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setProjects: (projects) => {
     const state = get()
-    
-    console.log('setProjects called:', {
-      isDragging: state.isDragging,
-      projectsCount: projects.length,
-      projects: projects
-    })
-    
+
     // 如果正在拖拽，则跳过更新以避免冲突
     if (state.isDragging) {
       console.log('Skipping update: dragging in progress')
       return
     }
-    
-    console.log('Applying update with new data')
+
     set({ projects })
   },
-  
+
   setCurrentProject: (project) => set({ currentProject: project }),
-  
-  addProject: (project) => set((state) => ({ 
-    projects: [project, ...state.projects] 
+
+  addProject: (project) => set((state) => ({
+    projects: [project, ...state.projects]
   })),
-  
+
   updateProject: (id, updates) => set((state) => ({
     projects: state.projects.map(p => p.id === id ? { ...p, ...updates } : p),
-    currentProject: state.currentProject?.id === id 
-      ? { ...state.currentProject, ...updates } 
+    currentProject: state.currentProject?.id === id
+      ? { ...state.currentProject, ...updates }
       : state.currentProject
   })),
-  
+
   deleteProject: (id) => {
     // 清理缩略图缓存
     const thumbnailCacheKey = `thumbnail_${id}`
     localStorage.removeItem(thumbnailCacheKey)
-    
+
     set((state) => ({
       projects: state.projects.filter(p => p.id !== id),
       currentProject: state.currentProject?.id === id ? null : state.currentProject
     }))
   },
-  
+
   setLoading: (loading) => set({ loading }),
-  
+
   setError: (error) => set({ error }),
-  
+
   updateClip: (projectId, clipId, updates) => set((state) => ({
-    projects: state.projects.map(p => 
-      p.id === projectId 
+    projects: state.projects.map(p =>
+      p.id === projectId
         ? { ...p, clips: (p.clips || []).map(c => c.id === clipId ? { ...c, ...updates } : c) }
         : p
     ),
     currentProject: state.currentProject?.id === projectId
-      ? { 
-          ...state.currentProject, 
+      ? {
+          ...state.currentProject,
           clips: (state.currentProject.clips || []).map(c => c.id === clipId ? { ...c, ...updates } : c)
         }
       : state.currentProject
   })),
-  
+
   updateCollection: (projectId, collectionId, updates) => set((state) => ({
-    projects: state.projects.map(p => 
-      p.id === projectId 
+    projects: state.projects.map(p =>
+      p.id === projectId
         ? { ...p, collections: (p.collections || []).map(c => c.id === collectionId ? { ...c, ...updates } : c) }
         : p
     ),
     currentProject: state.currentProject?.id === projectId
-      ? { 
-          ...state.currentProject, 
+      ? {
+          ...state.currentProject,
           collections: (state.currentProject.collections || []).map(c => c.id === collectionId ? { ...c, ...updates } : c)
         }
       : state.currentProject
@@ -171,8 +165,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addCollection: (projectId: string, collection: Collection) => {
     set((state) => ({
-      projects: state.projects.map(project => 
-        project.id === projectId 
+      projects: state.projects.map(project =>
+        project.id === projectId
           ? {
               ...project,
               collections: [...(project.collections || []), collection]
@@ -190,8 +184,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   deleteCollection: (projectId: string, collectionId: string) => {
     set((state) => ({
-      projects: state.projects.map(project => 
-        project.id === projectId 
+      projects: state.projects.map(project =>
+        project.id === projectId
           ? {
               ...project,
               collections: project.collections?.filter(c => c.id !== collectionId) || []
@@ -211,25 +205,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const state = get()
     const project = state.projects.find(p => p.id === projectId)
     const collection = project?.collections?.find(c => c.id === collectionId)
-    
+
     if (!collection) {
       throw new Error('Collection not found')
     }
-    
+
     const originalClipIds = [...collection.clip_ids]
     const updatedClipIds = collection.clip_ids.filter(id => id !== clipId)
-    
+
     // 检查是否真的有变化
     if (originalClipIds.length === updatedClipIds.length) {
       console.log('Clip not found in collection, skipping update')
       return
     }
-    
+
     // 乐观更新：立即更新前端状态
     const updateState = (clipIds: string[]) => {
       set((state) => ({
-        projects: state.projects.map(project => 
-          project.id === projectId 
+        projects: state.projects.map(project =>
+          project.id === projectId
             ? {
                 ...project,
                 collections: project.collections?.map(collection =>
@@ -259,10 +253,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         lastEditTimestamp: Date.now()
       }))
     }
-    
+
     // 立即应用更新
     updateState(updatedClipIds)
-    
+
     // 调用后端API
     try {
       console.log('Removing clip from collection:', { projectId, collectionId, clipId })
@@ -286,16 +280,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   reorderCollectionClips: async (projectId: string, collectionId: string, newClipIds: string[]) => {
     console.log('Starting reorderCollectionClips:', { projectId, collectionId, newClipIds })
-    
+
     // 获取原始状态
     const state = get()
     console.log('Current state projects:', state.projects.map(p => ({ id: p.id, collectionsCount: p.collections?.length || 0 })))
     console.log('Current state currentProject:', state.currentProject ? { id: state.currentProject.id, collectionsCount: state.currentProject.collections?.length || 0 } : null)
-    
+
     // 优先从currentProject中查找，如果找不到再从projects数组中查找
     let originalProject = state.currentProject?.id === projectId ? state.currentProject : null
     let originalCollection = originalProject?.collections?.find(c => c.id === collectionId)
-    
+
     // 如果currentProject中没有找到，尝试从projects数组中查找
     if (!originalCollection) {
       const projectFromArray = state.projects.find(p => p.id === projectId)
@@ -304,37 +298,37 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         originalCollection = originalProject.collections?.find(c => c.id === collectionId)
       }
     }
-    
+
     console.log('Found project:', originalProject ? { id: originalProject.id, collectionsCount: originalProject.collections?.length || 0 } : null)
-    
+
     if (originalProject?.collections) {
       console.log('Project collections:', originalProject.collections.map(c => ({ id: c.id, title: c.collection_title })))
     }
-    
+
     console.log('Found collection:', originalCollection ? { id: originalCollection.id, title: originalCollection.collection_title } : null)
-    
+
     if (!originalCollection) {
-      console.error('Collection not found in store. Available collections:', 
+      console.error('Collection not found in store. Available collections:',
         originalProject?.collections?.map(c => c.id) || [])
       throw new Error('Collection not found')
     }
-    
+
     const originalClipIds = [...originalCollection.clip_ids]
-    
+
     // 检查是否真的有变化
     if (JSON.stringify(originalClipIds) === JSON.stringify(newClipIds)) {
       console.log('No changes detected, skipping update')
       return
     }
-    
+
     // 记录编辑时间戳
     const now = Date.now()
-    
+
     // 乐观更新：立即更新前端状态
     const updateState = (clipIds: string[]) => {
       set((state) => ({
-        projects: state.projects.map(project => 
-          project.id === projectId 
+        projects: state.projects.map(project =>
+          project.id === projectId
             ? {
                 ...project,
                 collections: project.collections?.map(collection =>
@@ -358,10 +352,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         lastEditTimestamp: now
       }))
     }
-    
+
     // 立即应用新顺序
     updateState(newClipIds)
-    
+
     // 调用后端API
     try {
       console.log('Calling backend API for reorder...')
@@ -377,14 +371,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addClipToCollection: async (projectId: string, collectionId: string, clipIds: string[]) => {
     console.log('Starting addClipToCollection:', { projectId, collectionId, clipIds })
-    
+
     // 获取原始状态
     const state = get()
-    
+
     // 优先从currentProject中查找，如果找不到再从projects数组中查找
     let originalProject = state.currentProject?.id === projectId ? state.currentProject : null
     let originalCollection = originalProject?.collections?.find(c => c.id === collectionId)
-    
+
     // 如果currentProject中没有找到，尝试从projects数组中查找
     if (!originalCollection) {
       const projectFromArray = state.projects.find(p => p.id === projectId)
@@ -393,25 +387,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         originalCollection = originalProject.collections?.find(c => c.id === collectionId)
       }
     }
-    
+
     if (!originalCollection) {
       throw new Error('Collection not found')
     }
-    
+
     const originalClipIds = [...originalCollection.clip_ids]
     const updatedClipIds = [...originalClipIds, ...clipIds.filter(id => !originalClipIds.includes(id))]
-    
+
     // 检查是否真的有变化
     if (originalClipIds.length === updatedClipIds.length) {
       console.log('No new clips to add, skipping update')
       return
     }
-    
+
     // 乐观更新：立即更新前端状态
     const updateState = (clipIds: string[]) => {
       set((state) => ({
-        projects: state.projects.map(project => 
-          project.id === projectId 
+        projects: state.projects.map(project =>
+          project.id === projectId
             ? {
                 ...project,
                 collections: project.collections?.map(collection =>
@@ -435,10 +429,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         lastEditTimestamp: Date.now()
       }))
     }
-    
+
     // 立即应用更新
     updateState(updatedClipIds)
-    
+
     // 调用后端API
     try {
       console.log('Adding clips to collection:', { projectId, collectionId, clipIds })

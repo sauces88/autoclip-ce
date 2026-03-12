@@ -55,21 +55,27 @@ class ThumbnailGenerator:
             
             # 检查是否使用视频封面
             if time_offset == -1.0:
-                # 使用视频封面
+                # 优先用 PIL 读取封面图（规避 FFmpeg 对非标准 JPEG 的兼容性问题）
                 cover_path = video_path.parent / f"{video_path.stem}_cover.jpg"
+                cover_ok = False
                 if cover_path.exists():
-                    # 直接复制封面文件并调整大小
-                    cmd = [
-                        'ffmpeg',
-                        '-i', str(cover_path),
-                        '-vf', f'scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black',
-                        '-q:v', '2',
-                        '-y',
-                        str(output_path)
-                    ]
-                    logger.info(f"使用视频封面生成缩略图: {cover_path} -> {output_path}")
-                else:
-                    # 封面不存在，回退到默认时间点
+                    try:
+                        from PIL import Image
+                        with Image.open(cover_path) as img:
+                            img_rgb = img.convert("RGB")
+                            # 等比缩放居中，背景填黑
+                            img_rgb.thumbnail((width, height), Image.LANCZOS)
+                            canvas = Image.new("RGB", (width, height), (0, 0, 0))
+                            x = (width - img_rgb.width) // 2
+                            y = (height - img_rgb.height) // 2
+                            canvas.paste(img_rgb, (x, y))
+                            canvas.save(str(output_path), "JPEG", quality=85)
+                        logger.info(f"使用 PIL 从封面生成缩略图: {cover_path} -> {output_path}")
+                        return output_path  # PIL 处理完直接返回，跳过后续 FFmpeg 流程
+                    except Exception as e:
+                        logger.warning(f"PIL 读取封面失败，改从视频帧提取: {e}")
+                if not cover_ok:
+                    # 封面不存在或 PIL 读取失败，从视频帧提取
                     time_offset = 1.0
                     cmd = [
                         'ffmpeg',
@@ -81,7 +87,7 @@ class ThumbnailGenerator:
                         '-y',
                         str(output_path)
                     ]
-                    logger.info(f"封面不存在，回退到默认时间点: {time_offset}秒")
+                    logger.info(f"从视频帧提取缩略图，时间点: {time_offset}秒")
             else:
                 # 使用指定时间点
                 logger.info(f"为视频 {video_path.name} 选择缩略图时间点: {time_offset}秒")

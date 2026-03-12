@@ -41,6 +41,7 @@ async def startup_event():
     logger.info("启动AutoClip API服务...")
     # 导入所有模型以确保表被创建
     from .models.bilibili import BilibiliAccount, UploadRecord
+    from .models.asr_cache import ASRCache
     Base.metadata.create_all(bind=engine)
     logger.info("数据库表创建完成")
     

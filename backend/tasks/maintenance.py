@@ -103,8 +103,10 @@ def health_check(self) -> Dict[str, Any]:
         # 检查数据库连接
         try:
             db = SessionLocal()
-            db.execute("SELECT 1")
-            db.close()
+            try:
+                db.execute("SELECT 1")
+            finally:
+                db.close()
             health_status['checks']['database'] = {'status': 'healthy', 'message': '数据库连接正常'}
         except Exception as e:
             health_status['checks']['database'] = {'status': 'unhealthy', 'message': f'数据库连接失败: {e}'}

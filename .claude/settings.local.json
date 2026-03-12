@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(yt-dlp:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(git:*)",
+      "Bash(dir:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(cd:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(curl:*)",
+      "Bash(pip:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(npx tsc:*)",
+      "mcp__fetch__fetch",
+      "mcp__MySQL__fetch_data",
+      "mcp__MySQL__execute_query",
+      "Bash(wmic process:*)",
+      "Bash(nvidia-smi:*)",
+      "WebFetch(domain:www.volcengine.com)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "WebSearch",
+      "WebFetch(domain:ai.google.dev)",
+      "mcp__MySQL__describe_table"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/skill-forced-eval.js"
+          }
+        ]
+      }
+    ]
+  }
+}

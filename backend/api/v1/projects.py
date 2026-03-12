@@ -12,6 +12,7 @@ from backend.services.project_service import ProjectService
 from backend.services.processing_service import ProcessingService
 from backend.services.websocket_notification_service import WebSocketNotificationService
 from backend.tasks.processing import process_video_pipeline
+from backend.models.task import Task, TaskStatus
 from backend.core.websocket_manager import manager as websocket_manager
 from backend.schemas.project import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectListResponse, ProjectFilter,
@@ -198,7 +199,7 @@ async def create_project(
 
 
 @router.get("/", response_model=ProjectListResponse)
-async def get_projects(
+def get_projects(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(20, ge=1, le=100, description="Page size"),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -224,7 +225,7 @@ async def get_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(
+def get_project(
     project_id: str,
     include_clips: bool = Query(False, description="是否包含切片数据"),
     include_collections: bool = Query(False, description="是否包含合集数据"),
@@ -276,7 +277,7 @@ async def get_project(
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-async def update_project(
+def update_project(
     project_id: str,
     project_data: ProjectUpdate,
     project_service: ProjectService = Depends(get_project_service)
@@ -311,7 +312,7 @@ async def update_project(
 
 
 @router.delete("/{project_id}")
-async def delete_project(
+def delete_project(
     project_id: str,
     project_service: ProjectService = Depends(get_project_service)
 ):
@@ -328,7 +329,7 @@ async def delete_project(
 
 
 @router.post("/sync-all-data")
-async def sync_all_projects_data(
+def sync_all_projects_data(
     db: Session = Depends(get_db)
 ):
     """同步所有项目的数据到数据库"""
@@ -350,7 +351,7 @@ async def sync_all_projects_data(
 
 
 @router.post("/{project_id}/sync-data")
-async def sync_project_data(
+def sync_project_data(
     project_id: str,
     db: Session = Depends(get_db)
 ):
@@ -396,6 +397,14 @@ async def start_processing(
         # 检查项目状态
         if project.status.value not in ["pending", "failed"]:
             raise HTTPException(status_code=400, detail="Project is not in pending or failed status")
+
+        # 防止重复提交：检查是否已有活跃任务
+        active_task = processing_service.db.query(Task).filter(
+            Task.project_id == project_id,
+            Task.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]),
+        ).first()
+        if active_task:
+            raise HTTPException(status_code=400, detail="该项目已有任务正在处理中，请勿重复提交")
         
         # 获取视频和SRT文件路径
         video_path = project.video_path
@@ -489,7 +498,26 @@ async def retry_processing(
         # 检查项目状态 - 允许失败、完成、处理中和等待中状态重试
         if project.status.value not in ["failed", "completed", "processing", "pending"]:
             raise HTTPException(status_code=400, detail="Project is not in failed, completed, processing, or pending status")
-        
+
+        # 检查是否有活跃任务：若 Celery 中确实在跑则拒绝，否则视为 stale 清掉
+        active_tasks = processing_service.db.query(Task).filter(
+            Task.project_id == project_id,
+            Task.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]),
+        ).all()
+        for task in active_tasks:
+            celery_alive = False
+            if task.celery_task_id:
+                from celery.result import AsyncResult
+                result = AsyncResult(task.celery_task_id)
+                # PENDING/STARTED/RETRY 说明 Celery worker 确实在处理
+                celery_alive = result.state in ("PENDING", "STARTED", "RETRY")
+            if celery_alive:
+                raise HTTPException(status_code=400, detail="该项目正在处理中，请勿重复提交")
+            else:
+                # Celery 已不在处理，标记为 FAILED
+                task.status = TaskStatus.FAILED
+        processing_service.db.commit()
+
         # 重置项目状态
         project_service.update_project_status(project_id, "pending")
         
@@ -688,7 +716,7 @@ async def resume_processing(
 
 
 @router.get("/{project_id}/status")
-async def get_processing_status(
+def get_processing_status(
     project_id: str,
     project_service: ProjectService = Depends(get_project_service),
     processing_service: ProcessingService = Depends(get_processing_service)
@@ -725,7 +753,7 @@ async def get_processing_status(
 
 
 @router.get("/{project_id}/logs")
-async def get_project_logs(
+def get_project_logs(
     project_id: str,
     lines: int = Query(50, ge=1, le=1000, description="Number of log lines to return"),
     project_service: ProjectService = Depends(get_project_service)
@@ -766,7 +794,7 @@ async def get_project_logs(
 
 
 @router.get("/{project_id}/import-status")
-async def get_import_status(
+def get_import_status(
     project_id: str,
     project_service: ProjectService = Depends(get_project_service)
 ):
@@ -796,7 +824,7 @@ async def get_import_status(
 
 
 @router.post("/{project_id}/generate-thumbnail")
-async def generate_project_thumbnail(
+def generate_project_thumbnail(
     project_id: str,
     project_service: ProjectService = Depends(get_project_service)
 ):
@@ -840,8 +868,8 @@ async def generate_project_thumbnail(
         raise HTTPException(status_code=500, detail=f"生成缩略图失败: {str(e)}")
 
 
-@router.get("/{project_id}/files/{filename}")
-async def get_project_file(
+@router.get("/{project_id}/files/{filename:path}")
+def get_project_file(
     project_id: str,
     filename: str,
     project_service: ProjectService = Depends(get_project_service)
@@ -857,10 +885,14 @@ async def get_project_file(
         project_root = get_project_directory(project_id)
         
         # 尝试多个可能的路径
+        from pathlib import PurePosixPath
+        base_name = PurePosixPath(filename).name  # 只取文件名，忽略前缀子目录
         possible_paths = [
-            project_root / "raw" / filename,  # 原始文件
+            project_root / "raw" / filename,       # 原始文件（精确路径）
+            project_root / "raw" / base_name,      # raw/ 下只按文件名查找（兼容 input/input.mp4 → input.mp4）
             project_root / "metadata" / filename,  # 元数据文件
-            project_root / filename,  # 直接在项目根目录
+            project_root / "metadata" / base_name,
+            project_root / filename,               # 直接在项目根目录
         ]
         
         file_path = None
@@ -897,7 +929,7 @@ async def get_project_file(
 
 
 @router.get("/{project_id}/clips/{clip_id}")
-async def get_project_clip(
+def get_project_clip(
     project_id: str,
     clip_id: str,
     project_service: ProjectService = Depends(get_project_service)
@@ -916,11 +948,8 @@ async def get_project_clip(
         if not clips_dir.exists():
             raise HTTPException(status_code=404, detail=f"Clips directory not found: {clips_dir}")
         
-        # 查找对应的视频文件
-        # 首先尝试通过clip_id查找
-        video_files = list(clips_dir.glob(f"{clip_id}_*.mp4"))
-        
-        # 如果没找到，尝试查找所有mp4文件，然后通过数据库匹配
+        # 直接通过数据库查找clip的video_path（glob匹配UUID无意义，文件名是{index}_{title}.mp4）
+        video_files = []
         if not video_files:
             from ...models.clip import Clip
             clip = project_service.db.query(Clip).filter(Clip.id == clip_id).first()
@@ -952,8 +981,199 @@ async def get_project_clip(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/{project_id}/clips/{clip_id}/cover")
+def get_clip_cover(
+    project_id: str,
+    clip_id: str,
+    project_service: ProjectService = Depends(get_project_service)
+):
+    """获取切片封面图片"""
+    try:
+        from ...core.path_utils import get_project_directory
+        from ...models.clip import Clip
+        from fastapi.responses import FileResponse
+        import re as _re
+
+        project_dir = get_project_directory(project_id)
+        clips_with_subs = project_dir / "output" / "clips_with_subs"
+
+        # 从数据库获取 clip title
+        clip = project_service.db.query(Clip).filter(Clip.id == clip_id).first()
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip not found")
+
+        title = clip.title or ""
+        safe_name = _re.sub(r'[\\/:*?"<>|]', "_", title)
+
+        # 尝试多种后缀
+        for ext in ("_cover.png", "_cover.jpg"):
+            cover_path = clips_with_subs / f"{safe_name}{ext}"
+            if cover_path.exists():
+                media = "image/png" if ext.endswith(".png") else "image/jpeg"
+                return FileResponse(path=str(cover_path), media_type=media, filename=cover_path.name)
+
+        # 也检查 step8_cover.json
+        step8_json = project_dir / "output" / "metadata" / "step8_cover.json"
+        if step8_json.exists():
+            import json as _json
+            data = _json.loads(step8_json.read_text(encoding="utf-8"))
+            for c in data.get("clips", []):
+                if str(c.get("clip_id")) == str(clip_id):
+                    p = Path(c.get("cover_path", ""))
+                    if p.exists():
+                        media = "image/png" if p.suffix == ".png" else "image/jpeg"
+                        return FileResponse(path=str(p), media_type=media, filename=p.name)
+
+        raise HTTPException(status_code=404, detail="封面不存在，可能尚未生成")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取切片封面失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{project_id}/clips/{clip_id}/regenerate-cover")
+def regenerate_clip_cover(
+    project_id: str,
+    clip_id: str,
+    project_service: ProjectService = Depends(get_project_service)
+):
+    """重新生成单个切片的封面"""
+    try:
+        from ...core.path_utils import get_project_directory
+        from ...models.clip import Clip
+        from ...pipeline.step8_cover import (
+            _extract_mid_frame, _generate_cover_with_seedream,
+            _download_image, _prepend_cover_to_video,
+            _get_video_dimensions, _pick_seedream_size,
+            _build_cover_prompt, _load_step8_json, _save_step8_json,
+        )
+        from ...utils.minio_upload_client import upload_file
+        import re as _re, random as _random, tempfile as _tempfile
+
+        clip = project_service.db.query(Clip).filter(Clip.id == clip_id).first()
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip not found")
+
+        project_dir = get_project_directory(project_id)
+        clips_with_subs = project_dir / "output" / "clips_with_subs"
+        metadata_dir = project_dir / "output" / "metadata"
+
+        title = clip.title or ""
+        safe_name = _re.sub(r'[\\/:*?"<>|]', "_", title)
+
+        # 找到视频文件（优先字幕版本）
+        video_path = None
+        sub_video = clips_with_subs / f"{safe_name}.mp4"
+        if sub_video.exists():
+            video_path = sub_video
+        elif clip.video_path and Path(clip.video_path).exists():
+            video_path = Path(clip.video_path)
+
+        if not video_path:
+            raise HTTPException(status_code=404, detail="找不到视频文件")
+
+        with _tempfile.TemporaryDirectory() as tmpdir:
+            screenshot_path = Path(tmpdir) / "screenshot.jpg"
+            rand_sec = round(_random.uniform(1.0, 10.0), 1)
+            ok = _extract_mid_frame(video_path, rand_sec, screenshot_path)
+            if not ok:
+                ok = _extract_mid_frame(video_path, 1.0, screenshot_path)
+            if not ok:
+                raise HTTPException(status_code=500, detail="无法截取视频截图")
+
+            screenshot_url = upload_file(screenshot_path)
+            vid_w, vid_h = _get_video_dimensions(video_path)
+            size = _pick_seedream_size(vid_w, vid_h)
+
+            content_summary = clip.description or ""
+            image_url = _generate_cover_with_seedream(
+                screenshot_url=screenshot_url,
+                title=title,
+                content_summary=content_summary,
+                size=size,
+            )
+
+            image_bytes = _download_image(image_url)
+            cover_output = clips_with_subs / f"{safe_name}_cover.png"
+            cover_output.parent.mkdir(parents=True, exist_ok=True)
+            cover_output.write_bytes(image_bytes)
+
+        # 更新 step8_cover.json
+        step8_json_path = metadata_dir / "step8_cover.json"
+        step8_data = _load_step8_json(step8_json_path)
+        # 移除旧记录
+        step8_data["clips"] = [c for c in step8_data["clips"] if str(c.get("clip_id")) != str(clip_id)]
+        step8_data["clips"].append({
+            "clip_id": str(clip_id),
+            "cover_path": str(cover_output),
+            "cover_inserted": False,
+            "prompt_used": f"regenerated: {title[:50]}",
+        })
+        _save_step8_json(step8_json_path, step8_data)
+
+        return {"success": True, "cover_path": str(cover_output), "message": "封面已重新生成"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重新生成封面失败: {e}")
+        raise HTTPException(status_code=500, detail=f"重新生成封面失败: {str(e)}")
+
+
+@router.post("/{project_id}/clips/{clip_id}/open-folder")
+def open_clip_folder(
+    project_id: str,
+    clip_id: str,
+    folder_type: str = "video",
+    project_service: ProjectService = Depends(get_project_service)
+):
+    """在本地文件管理器中打开 clip 所在文件夹
+
+    folder_type: "video" 打开视频文件夹, "cover" 打开封面文件夹
+    """
+    import subprocess, platform, re as _re
+    from ...core.path_utils import get_project_directory
+    from ...models.clip import Clip
+
+    clip = project_service.db.query(Clip).filter(Clip.id == clip_id).first()
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    project_dir = get_project_directory(project_id)
+
+    if folder_type == "cover":
+        target_dir = project_dir / "output" / "clips_with_subs"
+        if not target_dir.exists():
+            target_dir = project_dir / "output" / "clips"
+    else:
+        # 已烧录 → clips_with_subs，未烧录 → clips
+        title = clip.title or ""
+        safe_name = _re.sub(r'[\\/:*?"<>|]', "_", title)
+        sub_video = project_dir / "output" / "clips_with_subs" / f"{safe_name}.mp4"
+        if sub_video.exists():
+            target_dir = project_dir / "output" / "clips_with_subs"
+        else:
+            target_dir = project_dir / "output" / "clips"
+
+    if not target_dir.exists():
+        raise HTTPException(status_code=404, detail=f"目录不存在: {target_dir}")
+
+    # 打开文件管理器
+    system = platform.system()
+    if system == "Windows":
+        subprocess.Popen(["explorer", str(target_dir)])
+    elif system == "Darwin":
+        subprocess.Popen(["open", str(target_dir)])
+    else:
+        subprocess.Popen(["xdg-open", str(target_dir)])
+
+    return {"success": True, "path": str(target_dir)}
+
+
 @router.post("/sync-all")
-async def sync_all_projects_from_filesystem(
+def sync_all_projects_from_filesystem(
     db: Session = Depends(get_db)
 ):
     """从文件系统同步所有项目数据到数据库"""
@@ -985,7 +1205,7 @@ async def sync_all_projects_from_filesystem(
 
 
 @router.patch("/{project_id}/collections/{collection_id}/reorder")
-async def reorder_collection_clips(
+def reorder_collection_clips(
     project_id: str,
     collection_id: str,
     clip_ids: List[str],
@@ -1034,7 +1254,7 @@ async def reorder_collection_clips(
 
 
 @router.post("/sync/{project_id}")
-async def sync_project_from_filesystem(
+def sync_project_from_filesystem(
     project_id: str,
     db: Session = Depends(get_db)
 ):
@@ -1208,7 +1428,7 @@ async def generate_collection_video(
 
 
 @router.get("/{project_id}/download")
-async def download_project_file(
+def download_project_file(
     project_id: str,
     clip_id: Optional[str] = Query(None, description="下载指定切片"),
     collection_id: Optional[str] = Query(None, description="下载指定合集"),

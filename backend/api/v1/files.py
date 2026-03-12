@@ -249,11 +249,26 @@ async def get_project_clip_video(
         
         if not clip.video_path:
             raise HTTPException(status_code=404, detail="切片文件不存在")
-        
+
         file_path = Path(clip.video_path)
         if not file_path.exists():
+            # 文件名可能被净化过（移除了中文标点），用序号做 glob 兜底查找
+            import re as _re
+            _m = _re.match(r'^(\d+)_', file_path.name)
+            if _m and file_path.parent.exists():
+                _idx = _m.group(1)
+                for _actual in file_path.parent.glob(f"{_idx}_*.mp4"):
+                    file_path = _actual
+                    # 同步修正 DB 中的路径，避免下次再走 fallback
+                    try:
+                        clip.video_path = str(_actual)
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                    break
+        if not file_path.exists():
             raise HTTPException(status_code=404, detail="切片文件不存在")
-        
+
         # 返回视频文件，支持在线播放
         return FileResponse(
             path=str(file_path),

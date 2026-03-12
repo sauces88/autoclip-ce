@@ -1,788 +1,456 @@
 """
-语音识别工具 - 支持多种语音识别服务
-支持本地Whisper、OpenAI API、Azure Speech Services等多种语音识别服务
+语音识别工具 — Seed ASR AUC（录音文件识别标准版）
+
+流程：
+  1. 计算视频文件 MD5
+  2. 查 DB asr_cache: video_md5 → utterances_url（命中则跳过 ASR）
+  3. 未命中 → FFmpeg 提取音频 → MinIO 上传 → Seed ASR 识别
+  4. 保存 utterances JSON → MinIO 上传 → 写 DB 缓存（video_md5 为键）
+  5. 保存本地 asr_raw_utterances.json（供 Step 7 使用）
+  6. 词典纠错 → 生成 SRT
 """
-import logging
-import subprocess
+
 import json
+import logging
 import os
-import asyncio
-from typing import Optional, List, Dict, Any, Union
-from pathlib import Path
-from enum import Enum
-import requests
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# 尝试导入bcut-asr
-try:
-    from bcut_asr import BcutASR
-    from bcut_asr.orm import ResultStateEnum
-    BCUT_ASR_AVAILABLE = True
-except ImportError:
-    BCUT_ASR_AVAILABLE = False
-    logger.warning("bcut-asr未安装，将跳过bcut-asr方法")
 
-def _auto_install_bcut_asr():
-    """自动安装bcut-asr"""
-    try:
-        import subprocess
-        import sys
-        from pathlib import Path
-        
-        # 获取安装脚本路径
-        script_path = Path(__file__).parent.parent.parent / "scripts" / "install_bcut_asr.py"
-        
-        if not script_path.exists():
-            logger.error("安装脚本不存在，请手动安装bcut-asr")
-            _show_manual_install_guide()
-            return False
-        
-        logger.info("开始自动安装bcut-asr...")
-        
-        # 运行安装脚本
-        result = subprocess.run([
-            sys.executable, str(script_path)
-        ], capture_output=True, text=True, timeout=600)  # 10分钟超时
-        
-        if result.returncode == 0:
-            logger.info("✅ bcut-asr自动安装成功")
-            return True
-        else:
-            logger.error(f"❌ bcut-asr自动安装失败: {result.stderr}")
-            _show_manual_install_guide()
-            return False
-            
-    except subprocess.TimeoutExpired:
-        logger.error("❌ bcut-asr安装超时")
-        _show_manual_install_guide()
-        return False
-    except Exception as e:
-        logger.error(f"❌ bcut-asr自动安装失败: {e}")
-        _show_manual_install_guide()
-        return False
-
-def _show_manual_install_guide():
-    """显示手动安装指导"""
-    logger.info("📋 手动安装指导:")
-    logger.info("1. 安装 ffmpeg:")
-    logger.info("   macOS: brew install ffmpeg")
-    logger.info("   Ubuntu: sudo apt install ffmpeg")
-    logger.info("   Windows: winget install ffmpeg")
-    logger.info("2. 安装 bcut-asr:")
-    logger.info("   git clone https://github.com/SocialSisterYi/bcut-asr.git")
-    logger.info("   cd bcut-asr && pip install .")
-    logger.info("3. 运行手动安装脚本:")
-    logger.info("   python scripts/manual_install_guide.py")
-
-def _ensure_bcut_asr_available():
-    """确保bcut-asr可用，如果不可用则尝试自动安装"""
-    global BCUT_ASR_AVAILABLE
-    
-    if BCUT_ASR_AVAILABLE:
-        return True
-    
-    logger.info("bcut-asr不可用，尝试自动安装...")
-    
-    if _auto_install_bcut_asr():
-        # 重新尝试导入
-        try:
-            from bcut_asr import BcutASR
-            from bcut_asr.orm import ResultStateEnum
-            BCUT_ASR_AVAILABLE = True
-            logger.info("✅ bcut-asr安装成功，现在可以使用")
-            return True
-        except ImportError:
-            logger.error("❌ bcut-asr安装后仍无法导入")
-            return False
-    else:
-        logger.warning("⚠️ bcut-asr自动安装失败，将使用其他方法")
-        return False
-
+# ── 公共枚举/配置（保持向后兼容） ────────────────────────
 
 class SpeechRecognitionMethod(str, Enum):
-    """语音识别方法枚举"""
-    BCUT_ASR = "bcut_asr"
-    WHISPER_LOCAL = "whisper_local"
-    OPENAI_API = "openai_api"
-    AZURE_SPEECH = "azure_speech"
-    GOOGLE_SPEECH = "google_speech"
-    ALIYUN_SPEECH = "aliyun_speech"
+    BCUT_ASR       = "bcut_asr"
+    WHISPER_LOCAL  = "whisper_local"
+    OPENAI_API     = "openai_api"
+    AZURE_SPEECH   = "azure_speech"
+    GOOGLE_SPEECH  = "google_speech"
+    ALIYUN_SPEECH  = "aliyun_speech"
+    VOLCENGINE_ASR = "volcengine_asr"
 
 
 class LanguageCode(str, Enum):
-    """支持的语言代码"""
-    # 中文
-    CHINESE_SIMPLIFIED = "zh"
+    CHINESE_SIMPLIFIED  = "zh"
     CHINESE_TRADITIONAL = "zh-TW"
-    # 英文
-    ENGLISH = "en"
-    ENGLISH_US = "en-US"
-    ENGLISH_UK = "en-GB"
-    # 日文
-    JAPANESE = "ja"
-    # 韩文
-    KOREAN = "ko"
-    # 法文
-    FRENCH = "fr"
-    # 德文
-    GERMAN = "de"
-    # 西班牙文
-    SPANISH = "es"
-    # 俄文
-    RUSSIAN = "ru"
-    # 阿拉伯文
-    ARABIC = "ar"
-    # 葡萄牙文
-    PORTUGUESE = "pt"
-    # 意大利文
-    ITALIAN = "it"
-    # 自动检测
-    AUTO = "auto"
+    ENGLISH             = "en"
+    ENGLISH_US          = "en-US"
+    ENGLISH_UK          = "en-GB"
+    JAPANESE            = "ja"
+    KOREAN              = "ko"
+    FRENCH              = "fr"
+    GERMAN              = "de"
+    SPANISH             = "es"
+    RUSSIAN             = "ru"
+    ARABIC              = "ar"
+    PORTUGUESE          = "pt"
+    ITALIAN             = "it"
+    AUTO                = "auto"
 
 
 @dataclass
 class SpeechRecognitionConfig:
-    """语音识别配置"""
-    method: SpeechRecognitionMethod = SpeechRecognitionMethod.BCUT_ASR
+    method: SpeechRecognitionMethod = SpeechRecognitionMethod.VOLCENGINE_ASR
     language: LanguageCode = LanguageCode.AUTO
-    model: str = "base"  # Whisper模型大小
-    timeout: int = 0  # 超时时间（秒），0表示无限制
-    output_format: str = "srt"  # 输出格式
-    enable_timestamps: bool = True  # 是否启用时间戳
-    enable_punctuation: bool = True  # 是否启用标点符号
-    enable_speaker_diarization: bool = False  # 是否启用说话人分离
-    enable_fallback: bool = True  # 是否启用回退机制
-    fallback_method: SpeechRecognitionMethod = SpeechRecognitionMethod.WHISPER_LOCAL  # 回退方法
-    
-    def __post_init__(self):
-        """验证配置参数"""
-        # 验证方法
-        if not isinstance(self.method, SpeechRecognitionMethod):
-            try:
-                self.method = SpeechRecognitionMethod(self.method)
-            except ValueError:
-                raise ValueError(f"不支持的语音识别方法: {self.method}")
-        
-        # 验证语言
-        if not isinstance(self.language, LanguageCode):
-            try:
-                self.language = LanguageCode(self.language)
-            except ValueError:
-                raise ValueError(f"不支持的语言代码: {self.language}")
-        
-        # 验证模型
-        valid_models = ["tiny", "base", "small", "medium", "large"]
-        if self.model not in valid_models:
-            raise ValueError(f"不支持的Whisper模型: {self.model}")
-        
-        # 验证超时时间
-        if self.timeout < 0:
-            raise ValueError("超时时间不能为负数")
-        
-        # 验证输出格式
-        valid_formats = ["srt", "vtt", "txt", "json"]
-        if self.output_format not in valid_formats:
-            raise ValueError(f"不支持的输出格式: {self.output_format}")
+    model: str = "base"
+    timeout: int = 0
+    output_format: str = "srt"
+    enable_timestamps: bool = True
+    enable_punctuation: bool = True
+    enable_speaker_diarization: bool = False
+    enable_fallback: bool = False
+    fallback_method: SpeechRecognitionMethod = SpeechRecognitionMethod.VOLCENGINE_ASR
 
 
 class SpeechRecognitionError(Exception):
-    """语音识别错误"""
     pass
 
 
+# ── 音频工具函数 ──────────────────────────────────────────
+
+def _extract_audio(video_path: Path, out_path: Path,
+                   start: float = 0.0, duration: float = 0.0) -> None:
+    """从视频/音频提取 MP3（16kHz 单声道 32kbps）。"""
+    cmd = ["ffmpeg", "-y"]
+    if start > 0:
+        cmd += ["-ss", str(start)]
+    cmd += ["-i", str(video_path)]
+    if duration > 0:
+        cmd += ["-t", str(duration)]
+    cmd += ["-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1", "-b:a", "32k", str(out_path)]
+    r = subprocess.run(cmd, capture_output=True, timeout=600)
+    if r.returncode != 0:
+        raise SpeechRecognitionError("音频提取失败")
+
+
+# ── SRT 转换工具 ──────────────────────────────────────────
+
+def _ms2t(ms: int) -> str:
+    ms = max(0, int(ms))
+    h, rem = divmod(ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, ms_r = divmod(rem, 1_000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms_r:03d}"
+
+
+def _utterances_to_srt_lines(
+    utterances: List[Dict],
+    time_offset_ms: int = 0,
+    start_idx: int = 1,
+    prev_end_ms: int = 0,
+) -> Tuple[List[str], int, int]:
+    """
+    将 utterances 转为 SRT 行列表。
+    直接使用火山引擎 ASR 原始 utterance 断句（不做 word token 重分组）。
+    返回 (srt_lines, next_srt_idx, last_end_ms)
+    """
+    lines: List[str] = []
+    idx = start_idx
+    prev_end = prev_end_ms
+
+    # 直接用 ASR utterance 原文作为 SRT 条目
+    for utt in utterances:
+        utt_text = utt.get("text", "").strip()
+        if not utt_text:
+            continue
+        utt_s = utt.get("start_time", 0) + time_offset_ms
+        utt_e = utt.get("end_time", 0) + time_offset_ms
+        adj = max(prev_end, utt_s)
+        lines.extend([str(idx), f"{_ms2t(adj)} --> {_ms2t(utt_e)}", utt_text, ""])
+        idx += 1
+        prev_end = utt_e
+
+    if utterances:
+        logger.info(f"ASR 直出模式: {len(utterances)} 条 utterance → {idx - start_idx} 条 SRT")
+
+    # --- 以下为 word token 重分组逻辑（暂时注释，观察火山引擎直出效果） ---
+    # TARGET_CHARS = 14
+    # asr_tokens: List[Dict] = []
+    # for utt in utterances:
+    #     words = utt.get("words", [])
+    #     if words:
+    #         for w in words:
+    #             w_text = w.get("text", "").strip()
+    #             if not w_text:
+    #                 continue
+    #             asr_tokens.append({
+    #                 "text": w_text,
+    #                 "start": w["start_time"] + time_offset_ms,
+    #                 "end":   w["end_time"]   + time_offset_ms,
+    #             })
+    #     else:
+    #         utt_text = utt.get("text", "").strip()
+    #         if not utt_text:
+    #             continue
+    #         utt_s = utt["start_time"] + time_offset_ms
+    #         utt_e = utt["end_time"]   + time_offset_ms
+    #         n = len(utt_text)
+    #         for j, ch in enumerate(utt_text):
+    #             asr_tokens.append({
+    #                 "text":  ch,
+    #                 "start": int(utt_s + j / n * (utt_e - utt_s)),
+    #                 "end":   int(utt_s + (j + 1) / n * (utt_e - utt_s)),
+    #             })
+    # if not asr_tokens:
+    #     return lines, idx, prev_end
+    # groups: List[List[Dict]] = []
+    # cur_group: List[Dict] = []
+    # cur_len = 0
+    # for tok in asr_tokens:
+    #     tok_len = len(tok["text"])
+    #     if cur_group and cur_len + tok_len > TARGET_CHARS:
+    #         groups.append(cur_group)
+    #         cur_group = []
+    #         cur_len = 0
+    #     cur_group.append(tok)
+    #     cur_len += tok_len
+    # if cur_group:
+    #     groups.append(cur_group)
+    # def emit(text, s, e):
+    #     nonlocal idx, prev_end
+    #     adj = max(prev_end, s)
+    #     lines.extend([str(idx), f"{_ms2t(adj)} --> {_ms2t(e)}", text, ""])
+    #     idx += 1
+    #     prev_end = e
+    # for group in groups:
+    #     if not group:
+    #         continue
+    #     g_text  = "".join(t["text"] for t in group)
+    #     g_start = group[0]["start"]
+    #     g_end   = group[-1]["end"]
+    #     emit(g_text, g_start, g_end)
+
+    return lines, idx, prev_end
+
+
+# ── DB 缓存工具 ──────────────────────────────────────────
+
+def _compute_file_md5(file_path: Path) -> str:
+    """计算文件 MD5（分块读取，适合大文件）。"""
+    import hashlib
+    h = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _lookup_asr_cache(video_md5: str) -> Optional[str]:
+    """查 DB asr_cache，返回 utterances_url 或 None。"""
+    try:
+        from backend.core.database import SessionLocal
+        from backend.models.asr_cache import ASRCache
+        db = SessionLocal()
+        try:
+            row = db.query(ASRCache).filter(ASRCache.video_md5 == video_md5).first()
+            if row:
+                return row.utterances_url
+            return None
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"查询 ASR 缓存失败: {e}")
+        return None
+
+
+def _save_asr_cache(video_md5: str, utterances_url: str) -> None:
+    """写 DB asr_cache。"""
+    try:
+        from backend.core.database import SessionLocal
+        from backend.models.asr_cache import ASRCache
+        db = SessionLocal()
+        try:
+            row = ASRCache(video_md5=video_md5, utterances_url=utterances_url)
+            db.add(row)
+            db.commit()
+            logger.info(f"ASR 缓存已写入 DB: md5={video_md5}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"写入 ASR 缓存失败: {e}")
+
+
+def _download_json_from_url(url: str) -> List[Dict]:
+    """从 URL 下载 JSON 并解析。"""
+    import requests
+    resp = requests.get(url, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ── 词典纠错 ──────────────────────────────────────────────
+
+def _load_correction_dict() -> Dict[str, str]:
+    """加载 backend/data/词典.txt，返回 {错误: 正确} 替换表。"""
+    dict_path = Path(__file__).parent.parent / "data" / "词典.txt"
+    replacements: Dict[str, str] = {}
+    if not dict_path.exists():
+        return replacements
+    try:
+        for line in dict_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "→" in line:
+                wrong, correct = line.split("→", 1)
+                wrong, correct = wrong.strip(), correct.strip()
+                if wrong and correct:
+                    replacements[wrong] = correct
+    except Exception as e:
+        logger.warning(f"加载词典失败: {e}")
+    return replacements
+
+
+_DICT_REPLACEMENTS: Dict[str, str] = _load_correction_dict()
+
+
+def _apply_dict(text: str) -> str:
+    """用词典替换表修正文本中的已知错误。"""
+    for wrong, correct in _DICT_REPLACEMENTS.items():
+        text = text.replace(wrong, correct)
+    return text
+
+
+# ── 主识别器类 ────────────────────────────────────────────
+
 class SpeechRecognizer:
-    """语音识别器，支持多种语音识别服务"""
-    
+    """语音识别器（Seed ASR AUC 录音文件识别标准版）"""
+
     def __init__(self, config: Optional[SpeechRecognitionConfig] = None):
         self.config = config or SpeechRecognitionConfig()
         self.available_methods = self._check_available_methods()
-    
+
     def _check_available_methods(self) -> Dict[SpeechRecognitionMethod, bool]:
-        """检查可用的语音识别方法"""
-        methods = {}
-        
-        # 检查bcut-asr
-        methods[SpeechRecognitionMethod.BCUT_ASR] = self._check_bcut_asr_availability()
-        
-        # 检查本地Whisper
-        methods[SpeechRecognitionMethod.WHISPER_LOCAL] = self._check_whisper_availability()
-        
-        # 检查OpenAI API
-        methods[SpeechRecognitionMethod.OPENAI_API] = self._check_openai_availability()
-        
-        # 检查Azure Speech Services
-        methods[SpeechRecognitionMethod.AZURE_SPEECH] = self._check_azure_speech_availability()
-        
-        # 检查Google Speech-to-Text
-        methods[SpeechRecognitionMethod.GOOGLE_SPEECH] = self._check_google_speech_availability()
-        
-        # 检查阿里云语音识别
-        methods[SpeechRecognitionMethod.ALIYUN_SPEECH] = self._check_aliyun_speech_availability()
-        
-        return methods
-    
-    def _check_bcut_asr_availability(self) -> bool:
-        """检查bcut-asr是否可用，如果不可用则尝试自动安装"""
-        if BCUT_ASR_AVAILABLE:
-            return True
-        
-        # 尝试自动安装
-        logger.info("bcut-asr不可用，尝试自动安装...")
-        if _ensure_bcut_asr_available():
-            return True
-        
-        logger.warning("bcut-asr不可用且自动安装失败")
-        return False
-    
-    def _check_whisper_availability(self) -> bool:
-        """检查本地Whisper是否可用"""
-        try:
-            result = subprocess.run(['whisper', '--help'], 
-                                  capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            logger.warning("本地Whisper未安装或不可用")
-            return False
-    
-    def _check_openai_availability(self) -> bool:
-        """检查OpenAI API是否可用"""
-        api_key = os.getenv("OPENAI_API_KEY")
-        return api_key is not None and len(api_key.strip()) > 0
-    
-    def _check_azure_speech_availability(self) -> bool:
-        """检查Azure Speech Services是否可用"""
-        api_key = os.getenv("AZURE_SPEECH_KEY")
-        region = os.getenv("AZURE_SPEECH_REGION")
-        return api_key is not None and region is not None
-    
-    def _check_google_speech_availability(self) -> bool:
-        """检查Google Speech-to-Text是否可用"""
-        # 检查Google Cloud凭证文件
-        cred_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if cred_file and Path(cred_file).exists():
-            return True
-        
-        # 检查API密钥
-        api_key = os.getenv("GOOGLE_SPEECH_API_KEY")
-        return api_key is not None
-    
-    def _check_aliyun_speech_availability(self) -> bool:
-        """检查阿里云语音识别是否可用"""
-        access_key = os.getenv("ALIYUN_ACCESS_KEY_ID")
-        secret_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
-        app_key = os.getenv("ALIYUN_SPEECH_APP_KEY")
-        return access_key is not None and secret_key is not None and app_key is not None
-    
-    def _extract_audio_from_video(self, video_path: Path, output_dir: Path) -> Path:
-        """
-        从视频文件中提取音频
-        
-        Args:
-            video_path: 视频文件路径
-            output_dir: 输出目录
-            
-        Returns:
-            提取的音频文件路径
-        """
-        try:
-            # 检查ffmpeg是否可用
-            result = subprocess.run(['ffmpeg', '-version'], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode != 0:
-                raise SpeechRecognitionError("ffmpeg不可用，请安装ffmpeg")
-            
-            # 生成音频文件路径
-            audio_filename = f"{video_path.stem}_audio.wav"
-            audio_path = output_dir / audio_filename
-            
-            # 如果音频文件已存在，直接返回
-            if audio_path.exists():
-                logger.info(f"音频文件已存在: {audio_path}")
-                return audio_path
-            
-            logger.info(f"正在从视频提取音频: {video_path} -> {audio_path}")
-            
-            # 使用ffmpeg提取音频
-            cmd = [
-                'ffmpeg',
-                '-i', str(video_path),
-                '-vn',  # 不处理视频流
-                '-acodec', 'pcm_s16le',  # 使用PCM 16位编码
-                '-ar', '16000',  # 采样率16kHz
-                '-ac', '1',  # 单声道
-                '-y',  # 覆盖输出文件
-                str(audio_path)
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
-            if result.returncode != 0:
-                raise SpeechRecognitionError(f"音频提取失败: {result.stderr}")
-            
-            if not audio_path.exists():
-                raise SpeechRecognitionError("音频提取失败，输出文件不存在")
-            
-            logger.info(f"音频提取成功: {audio_path}")
-            return audio_path
-            
-        except subprocess.TimeoutExpired:
-            raise SpeechRecognitionError("音频提取超时")
-        except Exception as e:
-            raise SpeechRecognitionError(f"音频提取失败: {e}")
-    
-    def generate_subtitle(self, video_path: Path, output_path: Optional[Path] = None, 
-                         config: Optional[SpeechRecognitionConfig] = None) -> Path:
-        """
-        生成字幕文件
-        
-        Args:
-            video_path: 视频文件路径
-            output_path: 输出字幕文件路径
-            config: 语音识别配置
-            
-        Returns:
-            生成的字幕文件路径
-            
-        Raises:
-            SpeechRecognitionError: 语音识别失败
-        """
-        if not video_path.exists():
-            raise SpeechRecognitionError(f"视频文件不存在: {video_path}")
-        
-        # 使用传入的配置或默认配置
-        config = config or self.config
-        
-        # 确定输出路径
-        if output_path is None:
-            output_path = video_path.parent / f"{video_path.stem}.{config.output_format}"
-        
-        # 根据配置的方法选择识别服务，支持回退机制
-        try:
-            if config.method == SpeechRecognitionMethod.BCUT_ASR:
-                return self._generate_subtitle_bcut_asr(video_path, output_path, config)
-            elif config.method == SpeechRecognitionMethod.WHISPER_LOCAL:
-                return self._generate_subtitle_whisper_local(video_path, output_path, config)
-            elif config.method == SpeechRecognitionMethod.OPENAI_API:
-                return self._generate_subtitle_openai_api(video_path, output_path, config)
-            elif config.method == SpeechRecognitionMethod.AZURE_SPEECH:
-                return self._generate_subtitle_azure_speech(video_path, output_path, config)
-            elif config.method == SpeechRecognitionMethod.GOOGLE_SPEECH:
-                return self._generate_subtitle_google_speech(video_path, output_path, config)
-            elif config.method == SpeechRecognitionMethod.ALIYUN_SPEECH:
-                return self._generate_subtitle_aliyun_speech(video_path, output_path, config)
-            else:
-                raise SpeechRecognitionError(f"不支持的语音识别方法: {config.method}")
-        except SpeechRecognitionError as e:
-            # 如果启用了回退机制且当前方法不是回退方法，则尝试回退
-            if (config.enable_fallback and 
-                config.method != config.fallback_method and 
-                self.available_methods.get(config.fallback_method, False)):
-                
-                logger.warning(f"主方法 {config.method} 失败: {e}")
-                logger.info(f"尝试回退到 {config.fallback_method}")
-                
-                # 创建回退配置
-                fallback_config = SpeechRecognitionConfig(
-                    method=config.fallback_method,
-                    language=config.language,
-                    model=config.model,
-                    timeout=config.timeout,
-                    output_format=config.output_format,
-                    enable_timestamps=config.enable_timestamps,
-                    enable_punctuation=config.enable_punctuation,
-                    enable_speaker_diarization=config.enable_speaker_diarization,
-                    enable_fallback=False  # 避免无限回退
-                )
-                
-                return self.generate_subtitle(video_path, output_path, fallback_config)
-            else:
-                raise
-    
-    def _generate_subtitle_bcut_asr(self, video_path: Path, output_path: Path, 
-                                   config: SpeechRecognitionConfig) -> Path:
-        """使用bcut-asr生成字幕"""
-        # 确保bcut-asr可用
-        if not _ensure_bcut_asr_available():
-            raise SpeechRecognitionError(
-                "bcut-asr不可用且自动安装失败，请手动安装:\n"
-                "1. 运行: python scripts/install_bcut_asr.py\n"
-                "2. 或手动安装: git clone https://github.com/SocialSisterYi/bcut-asr.git\n"
-                "3. 同时确保已安装ffmpeg:\n"
-                "   macOS: brew install ffmpeg\n"
-                "   Ubuntu: sudo apt install ffmpeg\n"
-                "   Windows: winget install ffmpeg"
-            )
-        
-        try:
-            logger.info(f"开始使用bcut-asr生成字幕: {video_path}")
-            
-            # 检查视频文件是否存在
-            if not video_path.exists():
-                raise SpeechRecognitionError(f"视频文件不存在: {video_path}")
-            
-            # 检查视频文件大小
-            file_size = video_path.stat().st_size
-            if file_size == 0:
-                raise SpeechRecognitionError(f"视频文件为空: {video_path}")
-            
-            # 检查文件格式，如果是视频文件需要先提取音频
-            audio_path = self._extract_audio_from_video(video_path, output_path.parent)
-            
-            # 创建BcutASR实例，使用音频文件
-            asr = BcutASR(str(audio_path))
-            
-            # 上传文件
-            logger.info("正在上传文件到bcut-asr...")
-            asr.upload()
-            
-            # 创建任务
-            logger.info("正在创建识别任务...")
-            asr.create_task()
-            
-            # 轮询检查结果
-            logger.info("正在等待识别结果...")
-            max_attempts = 60  # 最多等待5分钟（每5秒检查一次）
-            attempt = 0
-            
-            while attempt < max_attempts:
-                result = asr.result()
-                
-                # 判断识别成功
-                if result.state == ResultStateEnum.COMPLETE:
-                    logger.info("bcut-asr识别完成")
-                    break
-                elif result.state == ResultStateEnum.FAILED:
-                    raise SpeechRecognitionError("bcut-asr识别失败")
-                
-                # 等待5秒后重试
-                import time
-                time.sleep(5)
-                attempt += 1
-                logger.info(f"等待识别结果... ({attempt}/{max_attempts})")
-            else:
-                raise SpeechRecognitionError("bcut-asr识别超时")
-            
-            # 解析字幕内容
-            subtitle = result.parse()
-            
-            # 判断是否存在字幕
-            if not subtitle.has_data():
-                raise SpeechRecognitionError("bcut-asr未识别到有效字幕内容")
-            
-            # 根据输出格式保存字幕
-            if config.output_format == "srt":
-                subtitle_content = subtitle.to_srt()
-            elif config.output_format == "json":
-                subtitle_content = subtitle.to_json()
-            elif config.output_format == "lrc":
-                subtitle_content = subtitle.to_lrc()
-            elif config.output_format == "txt":
-                subtitle_content = subtitle.to_txt()
-            else:
-                # 默认使用srt格式
-                subtitle_content = subtitle.to_srt()
-            
-            # 写入文件
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(subtitle_content)
-            
-            logger.info(f"bcut-asr字幕生成成功: {output_path}")
-            return output_path
-            
-        except Exception as e:
-            error_msg = f"bcut-asr生成字幕时发生错误: {e}\n"
-            error_msg += "可能的原因:\n"
-            error_msg += "1. 网络连接问题\n"
-            error_msg += "2. 文件格式不支持\n"
-            error_msg += "3. 文件过大\n"
-            error_msg += "4. bcut-asr服务暂时不可用"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-    
-    def _generate_subtitle_whisper_local(self, video_path: Path, output_path: Path, 
-                                       config: SpeechRecognitionConfig) -> Path:
-        """使用本地Whisper生成字幕"""
-        if not self.available_methods[SpeechRecognitionMethod.WHISPER_LOCAL]:
-            raise SpeechRecognitionError(
-                "本地Whisper不可用，请安装whisper: pip install openai-whisper\n"
-                "同时确保已安装ffmpeg:\n"
-                "  macOS: brew install ffmpeg\n"
-                "  Ubuntu: sudo apt install ffmpeg\n"
-                "  Windows: 下载ffmpeg并添加到PATH"
-            )
-        
-        try:
-            logger.info(f"开始使用本地Whisper生成字幕: {video_path}")
-            
-            # 检查视频文件是否存在
-            if not video_path.exists():
-                raise SpeechRecognitionError(f"视频文件不存在: {video_path}")
-            
-            # 检查视频文件大小
-            file_size = video_path.stat().st_size
-            if file_size == 0:
-                raise SpeechRecognitionError(f"视频文件为空: {video_path}")
-            
-            # 构建whisper命令
-            cmd = [
-                'whisper',
-                str(video_path),
-                '--output_dir', str(output_path.parent),
-                '--output_format', config.output_format,
-                '--model', config.model
-            ]
-            
-            # 添加语言参数
-            if config.language != LanguageCode.AUTO:
-                cmd.extend(['--language', config.language])
-            
-            # 添加超时处理
-            logger.info(f"执行Whisper命令: {' '.join(cmd)}")
-            
-            # 根据超时配置决定是否设置超时
-            if config.timeout > 0:
-                result = subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=config.timeout,
-                    cwd=str(video_path.parent)  # 设置工作目录
-                )
-            else:
-                # 无超时限制
-                result = subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    cwd=str(video_path.parent)  # 设置工作目录
-                )
-            
-            if result.returncode == 0:
-                # 检查输出文件是否存在
-                if output_path.exists():
-                    logger.info(f"本地Whisper字幕生成成功: {output_path}")
-                    return output_path
-                else:
-                    # 尝试查找其他可能的输出文件
-                    possible_outputs = list(output_path.parent.glob(f"{video_path.stem}*.{config.output_format}"))
-                    if possible_outputs:
-                        actual_output = possible_outputs[0]
-                        logger.info(f"找到Whisper输出文件: {actual_output}")
-                        return actual_output
-                    else:
-                        raise SpeechRecognitionError(f"Whisper执行成功但未找到输出文件: {output_path}")
-            else:
-                error_msg = f"本地Whisper执行失败 (返回码: {result.returncode}):\n"
-                if result.stderr:
-                    error_msg += f"错误信息: {result.stderr}\n"
-                if result.stdout:
-                    error_msg += f"输出信息: {result.stdout}"
-                
-                # 提供具体的错误解决建议
-                if "command not found" in result.stderr:
-                    error_msg += "\n\n解决方案: 请安装whisper: pip install openai-whisper"
-                elif "ffmpeg" in result.stderr.lower():
-                    error_msg += "\n\n解决方案: 请安装ffmpeg:\n  macOS: brew install ffmpeg\n  Ubuntu: sudo apt install ffmpeg"
-                elif "timeout" in result.stderr.lower():
-                    error_msg += f"\n\n解决方案: 视频处理超时，请尝试使用更小的模型 (--model tiny) 或增加超时时间"
-                
-                logger.error(error_msg)
-                raise SpeechRecognitionError(error_msg)
-                
-        except subprocess.TimeoutExpired:
-            error_msg = f"本地Whisper执行超时（{config.timeout}秒）\n"
-            error_msg += "解决方案:\n"
-            error_msg += "1. 使用更小的模型: --model tiny\n"
-            error_msg += "2. 增加超时时间\n"
-            error_msg += "3. 检查视频文件是否损坏"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-        except FileNotFoundError:
-            error_msg = "找不到whisper命令\n"
-            error_msg += "解决方案:\n"
-            error_msg += "1. 安装whisper: pip install openai-whisper\n"
-            error_msg += "2. 确保whisper在PATH中: which whisper\n"
-            error_msg += "3. 重新安装: pip uninstall openai-whisper && pip install openai-whisper"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-        except Exception as e:
-            error_msg = f"本地Whisper生成字幕时发生错误: {e}\n"
-            error_msg += "请检查:\n"
-            error_msg += "1. 视频文件格式是否支持\n"
-            error_msg += "2. 系统是否有足够的内存\n"
-            error_msg += "3. 是否有足够的磁盘空间"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-    
-    def _generate_subtitle_openai_api(self, video_path: Path, output_path: Path, 
-                                    config: SpeechRecognitionConfig) -> Path:
-        """使用OpenAI API生成字幕"""
-        if not self.available_methods[SpeechRecognitionMethod.OPENAI_API]:
-            raise SpeechRecognitionError("OpenAI API不可用，请设置OPENAI_API_KEY环境变量")
-        
-        try:
-            logger.info(f"开始使用OpenAI API生成字幕: {video_path}")
-            
-            # 这里需要实现OpenAI API调用
-            # 由于需要额外的依赖，这里先抛出异常
-            raise SpeechRecognitionError("OpenAI API功能暂未实现，请使用本地Whisper")
-            
-        except Exception as e:
-            error_msg = f"OpenAI API生成字幕时发生错误: {e}"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-    
-    def _generate_subtitle_azure_speech(self, video_path: Path, output_path: Path, 
-                                      config: SpeechRecognitionConfig) -> Path:
-        """使用Azure Speech Services生成字幕"""
-        if not self.available_methods[SpeechRecognitionMethod.AZURE_SPEECH]:
-            raise SpeechRecognitionError("Azure Speech Services不可用，请设置AZURE_SPEECH_KEY和AZURE_SPEECH_REGION环境变量")
-        
-        try:
-            logger.info(f"开始使用Azure Speech Services生成字幕: {video_path}")
-            
-            # 这里需要实现Azure Speech Services调用
-            raise SpeechRecognitionError("Azure Speech Services功能暂未实现，请使用本地Whisper")
-            
-        except Exception as e:
-            error_msg = f"Azure Speech Services生成字幕时发生错误: {e}"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-    
-    def _generate_subtitle_google_speech(self, video_path: Path, output_path: Path, 
-                                       config: SpeechRecognitionConfig) -> Path:
-        """使用Google Speech-to-Text生成字幕"""
-        if not self.available_methods[SpeechRecognitionMethod.GOOGLE_SPEECH]:
-            raise SpeechRecognitionError("Google Speech-to-Text不可用，请设置GOOGLE_APPLICATION_CREDENTIALS或GOOGLE_SPEECH_API_KEY环境变量")
-        
-        try:
-            logger.info(f"开始使用Google Speech-to-Text生成字幕: {video_path}")
-            
-            # 这里需要实现Google Speech-to-Text调用
-            raise SpeechRecognitionError("Google Speech-to-Text功能暂未实现，请使用本地Whisper")
-            
-        except Exception as e:
-            error_msg = f"Google Speech-to-Text生成字幕时发生错误: {e}"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-    
-    def _generate_subtitle_aliyun_speech(self, video_path: Path, output_path: Path, 
-                                       config: SpeechRecognitionConfig) -> Path:
-        """使用阿里云语音识别生成字幕"""
-        if not self.available_methods[SpeechRecognitionMethod.ALIYUN_SPEECH]:
-            raise SpeechRecognitionError("阿里云语音识别不可用，请设置ALIYUN_ACCESS_KEY_ID、ALIYUN_ACCESS_KEY_SECRET和ALIYUN_SPEECH_APP_KEY环境变量")
-        
-        try:
-            logger.info(f"开始使用阿里云语音识别生成字幕: {video_path}")
-            
-            # 这里需要实现阿里云语音识别调用
-            raise SpeechRecognitionError("阿里云语音识别功能暂未实现，请使用本地Whisper")
-            
-        except Exception as e:
-            error_msg = f"阿里云语音识别生成字幕时发生错误: {e}"
-            logger.error(error_msg)
-            raise SpeechRecognitionError(error_msg)
-    
+        volc_ok = bool(
+            os.getenv("VOLCENGINE_ASR_APP_ID") and os.getenv("VOLCENGINE_ASR_ACCESS_TOKEN")
+        )
+        return {m: (m == SpeechRecognitionMethod.VOLCENGINE_ASR and volc_ok)
+                for m in SpeechRecognitionMethod}
+
     def get_available_methods(self) -> Dict[SpeechRecognitionMethod, bool]:
-        """获取可用的语音识别方法"""
         return self.available_methods.copy()
-    
+
     def get_supported_languages(self) -> List[LanguageCode]:
-        """获取支持的语言列表"""
         return list(LanguageCode)
-    
+
     def get_whisper_models(self) -> List[str]:
-        """获取可用的Whisper模型列表"""
         return ["tiny", "base", "small", "medium", "large"]
 
+    def generate_subtitle(self, video_path: Path,
+                          output_path: Optional[Path] = None,
+                          config: Optional[SpeechRecognitionConfig] = None,
+                          metadata_dir: Optional[Path] = None) -> Path:
+        if not video_path.exists():
+            raise SpeechRecognitionError(f"视频文件不存在: {video_path}")
+        config = config or self.config
+        if output_path is None:
+            output_path = video_path.parent / f"{video_path.stem}.{config.output_format}"
+        return self._generate_subtitle_seed_asr(video_path, output_path, metadata_dir)
 
-def generate_subtitle_for_video(video_path: Path, output_path: Optional[Path] = None, 
-                               method: str = "auto", language: str = "auto", 
-                               model: str = "base", enable_fallback: bool = True) -> Path:
-    """
-    为视频生成字幕文件的便捷函数
-    
-    Args:
-        video_path: 视频文件路径
-        output_path: 输出字幕文件路径
-        method: 生成方法 ("auto", "bcut_asr", "whisper_local", "openai_api", "azure_speech", "google_speech", "aliyun_speech")
-        language: 语言代码
-        model: Whisper模型大小（仅对whisper_local有效）
-        enable_fallback: 是否启用回退机制
-        
-    Returns:
-        生成的字幕文件路径
-        
-    Raises:
-        SpeechRecognitionError: 语音识别失败
-    """
-    # 创建配置
-    config = SpeechRecognitionConfig(
-        method=SpeechRecognitionMethod(method) if method != "auto" else SpeechRecognitionMethod.BCUT_ASR,
-        language=LanguageCode(language),
-        model=model,
-        enable_fallback=enable_fallback
-    )
-    
-    recognizer = SpeechRecognizer()
-    
-    if method == "auto":
-        # 自动选择最佳方法
-        available_methods = recognizer.get_available_methods()
-        
-        # 按优先级选择方法（bcut-asr优先，因为速度更快）
-        priority_methods = [
-            SpeechRecognitionMethod.BCUT_ASR,
-            SpeechRecognitionMethod.WHISPER_LOCAL,
-            SpeechRecognitionMethod.OPENAI_API,
-            SpeechRecognitionMethod.AZURE_SPEECH,
-            SpeechRecognitionMethod.GOOGLE_SPEECH,
-            SpeechRecognitionMethod.ALIYUN_SPEECH
-        ]
-        
-        for priority_method in priority_methods:
-            if available_methods.get(priority_method, False):
-                config.method = priority_method
-                break
+    def _generate_subtitle_seed_asr(self, video_path: Path, output_path: Path,
+                                     metadata_dir: Optional[Path] = None) -> Path:
+        """Seed ASR AUC：上传 MinIO → DB 缓存查询 → 异步识别 → 生成 SRT"""
+        if not self.available_methods.get(SpeechRecognitionMethod.VOLCENGINE_ASR, False):
+            raise SpeechRecognitionError(
+                "火山引擎ASR不可用，请在 .env 中配置 "
+                "VOLCENGINE_ASR_APP_ID 和 VOLCENGINE_ASR_ACCESS_TOKEN"
+            )
+
+        logger.info(f"开始 Seed ASR 识别: {video_path.name}")
+
+        # 检查本地 utterances 缓存（最快路径）
+        cached_utterances = None
+        if metadata_dir:
+            raw_path = metadata_dir / "asr_raw_utterances.json"
+            if raw_path.exists() and raw_path.stat().st_size > 100:
+                try:
+                    cached_utterances = json.loads(raw_path.read_text(encoding="utf-8"))
+                    logger.info(f"复用本地 asr_raw_utterances.json（{len(cached_utterances)} 条），跳过上传和 ASR")
+                except Exception as e:
+                    logger.warning(f"读取本地缓存 utterances 失败，将重新识别: {e}")
+                    cached_utterances = None
+
+        if cached_utterances:
+            utterances = cached_utterances
         else:
-            raise SpeechRecognitionError("没有可用的语音识别服务，请安装whisper或配置API密钥")
-    
-    return recognizer.generate_subtitle(video_path, output_path, config)
+            # 1. 计算视频文件 MD5（缓存键）
+            video_md5 = _compute_file_md5(video_path)
+            logger.info(f"视频 MD5: {video_md5}")
+
+            # 2. 查 DB 缓存
+            cached_url = _lookup_asr_cache(video_md5)
+            if cached_url:
+                logger.info(f"DB 缓存命中，下载 utterances: {cached_url[:80]}...")
+                try:
+                    utterances = _download_json_from_url(cached_url)
+                    logger.info(f"从 DB 缓存恢复 {len(utterances)} 条 utterance")
+                except Exception as e:
+                    logger.warning(f"下载缓存 utterances 失败，重新 ASR: {e}")
+                    utterances = None
+            else:
+                utterances = None
+
+            # 3. 未命中 → 提取音频 → 上传 → ASR
+            if utterances is None:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp = Path(tmpdir)
+
+                    full_audio = tmp / "full_audio.mp3"
+                    _extract_audio(video_path, full_audio)
+                    logger.info(f"音频提取完成: {full_audio.stat().st_size / 1024 / 1024:.1f}MB")
+
+                    from backend.utils.minio_upload_client import upload_file
+                    audio_url = upload_file(full_audio)
+                    logger.info(f"音频已上传: {audio_url}")
+
+                    from backend.utils.seed_asr import transcribe
+                    utterances = transcribe(audio_url)
+
+                    if not utterances:
+                        raise SpeechRecognitionError("Seed ASR 未识别到有效内容")
+
+                    logger.info(f"ASR 识别完成: {len(utterances)} 条 utterance")
+
+                    # 4. 保存 utterances JSON → MinIO → 写 DB 缓存
+                    try:
+                        utt_json_path = tmp / "utterances.json"
+                        utt_json_path.write_text(
+                            json.dumps(utterances, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        utt_url = upload_file(utt_json_path)
+                        _save_asr_cache(video_md5, utt_url)
+                        logger.info(f"utterances 已上传并缓存: {utt_url[:80]}...")
+                    except Exception as e:
+                        logger.warning(f"上传/缓存 utterances 失败（不影响主流程）: {e}")
+
+            # 6. 保存本地 asr_raw_utterances.json（无论走 ASR 还是 DB 缓存都要保存）
+            if metadata_dir:
+                metadata_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = metadata_dir / "asr_raw_utterances.json"
+                raw_path.write_text(
+                    json.dumps(utterances, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                logger.info(f"原始 utterances 已保存: {raw_path}")
+
+        # 7. 词典纠错 → 按 word token 分组 → 生成 SRT
+        logger.info(f"开始词典纠错（{len(utterances)} 条 utterance）...")
+        for utt in utterances:
+            utt["text"] = _apply_dict(utt.get("text", ""))
+            for w in utt.get("words", []):
+                w["text"] = _apply_dict(w.get("text", ""))
+        logger.info("词典纠错完成，开始 word token 分组 + SRT 生成...")
+
+        srt_lines, srt_idx, _ = _utterances_to_srt_lines(utterances)
+        logger.info(f"SRT 生成完成: {srt_idx - 1} 条字幕行")
+
+        if not srt_lines:
+            raise SpeechRecognitionError("Seed ASR 未生成有效字幕")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(srt_lines), encoding="utf-8")
+        logger.info(f"字幕生成完成: {output_path}，共 {srt_idx - 1} 条")
+        return output_path
+
+
+# ── 便捷函数（保持向后兼容） ─────────────────────────────
+
+def generate_subtitle_for_video(
+    video_path: Path,
+    output_path: Optional[Path] = None,
+    method: str = "auto",
+    language: str = "auto",
+    model: str = "base",
+    enable_fallback: bool = False,
+    metadata_dir: Optional[Path] = None,
+) -> Path:
+    config = SpeechRecognitionConfig(
+        method=SpeechRecognitionMethod.VOLCENGINE_ASR,
+        language=LanguageCode(language) if language != "auto" else LanguageCode.AUTO,
+        model=model,
+    )
+    return SpeechRecognizer(config).generate_subtitle(
+        video_path, output_path, config, metadata_dir=metadata_dir
+    )
 
 
 def get_available_speech_recognition_methods() -> Dict[str, bool]:
-    """
-    获取可用的语音识别方法
-    
-    Returns:
-        可用方法字典
-    """
-    recognizer = SpeechRecognizer()
-    available_methods = recognizer.get_available_methods()
-    
     return {
-        method.value: available 
-        for method, available in available_methods.items()
+        m.value: (m == SpeechRecognitionMethod.VOLCENGINE_ASR and
+                  bool(os.getenv("VOLCENGINE_ASR_APP_ID") and os.getenv("VOLCENGINE_ASR_ACCESS_TOKEN")))
+        for m in SpeechRecognitionMethod
     }
 
 
 def get_supported_languages() -> List[str]:
-    """
-    获取支持的语言列表
-    
-    Returns:
-        支持的语言代码列表
-    """
     return [lang.value for lang in LanguageCode]
 
 
 def get_whisper_models() -> List[str]:
-    """
-    获取可用的Whisper模型列表
-    
-    Returns:
-        Whisper模型列表
-    """
     return ["tiny", "base", "small", "medium", "large"]

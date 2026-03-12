@@ -4,6 +4,7 @@
 """
 
 import logging
+import os
 from typing import Dict, Any, Optional
 from ..core.celery_app import celery_app
 
@@ -39,10 +40,14 @@ def submit_video_pipeline_task(project_id: str, input_video_path: str, input_srt
             logger.info(f"任务状态: {celery_task.state}")
             
             # 检查任务是否真的提交到队列
-            import redis
-            r = redis.Redis(host='localhost', port=6379, db=0)
+            import redis as _redis
+            from urllib.parse import urlparse
+            _redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+            _parsed = urlparse(_redis_url)
+            _db = int(_parsed.path.lstrip('/') or 0)
+            r = _redis.Redis(host=_parsed.hostname, port=_parsed.port or 6379, db=_db)
             queue_length = r.llen('processing')
-            logger.info(f"Redis队列长度: {queue_length}")
+            logger.info(f"Redis队列长度(db={_db}): {queue_length}")
             
         except Exception as e:
             logger.error(f"任务提交过程中出现异常: {e}")

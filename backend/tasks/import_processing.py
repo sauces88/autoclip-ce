@@ -68,32 +68,19 @@ def process_import_task(self, project_id: str, video_path: str, srt_file_path: O
             
             try:
                 from backend.utils.speech_recognizer import generate_subtitle_for_video
-                
-                # 根据视频分类选择模型
-                project = project_service.get(project_id)
-                video_category = "knowledge"  # 默认分类
-                if project and project.processing_config:
-                    video_category = project.processing_config.get("video_category", "knowledge")
-                
-                model = "base"  # 默认使用平衡模型
-                if video_category in ["business", "knowledge"]:
-                    model = "small"  # 知识类内容使用更准确的模型
-                elif video_category == "speech":
-                    model = "medium"  # 演讲内容使用高精度模型
-                
-                logger.info(f"使用Whisper生成字幕 - 语言: auto, 模型: {model}")
-                
+                from backend.core.path_utils import get_project_directory
+                proj_dir = get_project_directory(project_id)
+                meta_dir = proj_dir / "metadata"
+                meta_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("使用 Seed ASR AUC 生成字幕...")
                 generated_subtitle = generate_subtitle_for_video(
                     Path(video_path),
-                    language="auto",
-                    model=model
+                    metadata_dir=meta_dir,
                 )
                 srt_path = str(generated_subtitle)
-                logger.info(f"Whisper字幕生成成功: {srt_path}")
-                
+                logger.info(f"ASR 字幕生成成功: {srt_path}")
             except Exception as e:
-                logger.error(f"Whisper字幕生成失败: {str(e)}")
-                # 字幕生成失败，使用空字幕文件
+                logger.error(f"ASR 字幕生成失败: {str(e)}")
                 srt_path = None
         
         # 3. 更新项目状态为处理中

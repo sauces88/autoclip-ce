@@ -24,16 +24,32 @@ logger = logging.getLogger(__name__)
 
 class VideoProcessor:
     """视频处理工具类"""
-    
+
+    _nvenc_available: Optional[bool] = None  # 缓存检测结果
+
+    @staticmethod
+    def _has_nvenc() -> bool:
+        """检测 FFmpeg 是否支持 NVENC (h264_nvenc)，结果缓存"""
+        if VideoProcessor._nvenc_available is not None:
+            return VideoProcessor._nvenc_available
+        try:
+            r = subprocess.run(
+                ['ffmpeg', '-hide_banner', '-encoders'],
+                capture_output=True, text=True, timeout=10,
+            )
+            VideoProcessor._nvenc_available = 'h264_nvenc' in r.stdout
+        except Exception:
+            VideoProcessor._nvenc_available = False
+        logger.info(f"NVENC GPU 加速: {'可用' if VideoProcessor._nvenc_available else '不可用，使用 CPU'}")
+        return VideoProcessor._nvenc_available
+
     def __init__(self, clips_dir: Optional[str] = None, collections_dir: Optional[str] = None):
         # 强制使用传入的项目特定路径，不使用全局路径作为后备
         if not clips_dir:
             raise ValueError("clips_dir 参数是必需的，不能使用全局路径")
-        if not collections_dir:
-            raise ValueError("collections_dir 参数是必需的，不能使用全局路径")
-        
+
         self.clips_dir = Path(clips_dir)
-        self.collections_dir = Path(collections_dir)
+        self.collections_dir = Path(collections_dir) if collections_dir else None
     
     @staticmethod
     def sanitize_filename(filename: str) -> str:
@@ -152,17 +168,24 @@ class VideoProcessor:
             end_seconds = VideoProcessor.convert_ffmpeg_time_to_seconds(ffmpeg_end_time)
             duration = end_seconds - start_seconds
             
-            # 构建优化的FFmpeg命令
-            # 使用 -ss 在输入前进行精确定位，使用 -t 指定持续时间
+            # 构建 FFmpeg 命令
+            # -ss 放在 -i 后面 → 帧精确切割（不会从前一个关键帧开始）
+            # 不用 -c copy，需要重新编码才能帧精确
+            # 优先使用 NVENC GPU 加速，不可用时回退 CPU
+            use_nvenc = VideoProcessor._has_nvenc()
+            if use_nvenc:
+                video_codec = ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '18']
+            else:
+                video_codec = ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18']
             cmd = [
                 'ffmpeg',
-                '-ss', ffmpeg_start_time,  # 在输入前定位，更精确
                 '-i', str(input_video),
-                '-t', str(duration),  # 使用持续时间而不是绝对结束时间
-                '-c:v', 'copy',  # 复制视频流
-                '-c:a', 'copy',  # 复制音频流
+                '-ss', ffmpeg_start_time,
+                '-t', str(duration),
+                *video_codec,
+                '-c:a', 'aac', '-b:a', '192k',
                 '-avoid_negative_ts', 'make_zero',
-                '-y',  # 覆盖输出文件
+                '-y',
                 str(output_path)
             ]
             
@@ -359,12 +382,12 @@ class VideoProcessor:
         """
         successful_clips = []
         
-        for clip_data in clips_data:
+        for idx, clip_data in enumerate(clips_data):
             clip_id = clip_data['id']
             title = clip_data.get('title', f"片段_{clip_id}")
             start_time = clip_data['start_time']
             end_time = clip_data['end_time']
-            
+
             # 处理时间格式 - 如果是秒数，转换为SRT格式
             if isinstance(start_time, (int, float)):
                 start_time = VideoProcessor.convert_seconds_to_ffmpeg_time(start_time)

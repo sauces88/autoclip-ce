@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { Modal, Typography, Button, Tag, Space, Row, Col, Divider, message } from 'antd'
+import { Modal, Typography, Button, Tag, Space, Row, Col, Divider } from 'antd'
 import { 
   PlayCircleOutlined, 
   DownloadOutlined, 
@@ -12,9 +12,7 @@ import ReactPlayer from 'react-player'
 import { Clip } from '../store/useProjectStore'
 import { projectApi } from '../services/api'
 import SubtitleEditor from './SubtitleEditor'
-import { subtitleEditorApi } from '../services/subtitleEditorApi'
 import EditableTitle from './EditableTitle'
-import { SubtitleSegment, VideoEditOperation } from '../types/subtitle'
 
 const { Text, Title } = Typography
 
@@ -36,7 +34,6 @@ const ClipDetailModal: React.FC<ClipDetailModalProps> = ({
   const [playing, setPlaying] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [showSubtitleEditor, setShowSubtitleEditor] = useState(false)
-  const [subtitleData, setSubtitleData] = useState<SubtitleSegment[]>([])
   const playerRef = useRef<ReactPlayer>(null)
 
   const formatTime = (timeStr: string) => {
@@ -76,59 +73,28 @@ const ClipDetailModal: React.FC<ClipDetailModalProps> = ({
     onClose()
   }
 
-  const handleOpenSubtitleEditor = async () => {
-    // 显示开发中提示
-    message.info('开发中，敬请期待')
+  const handleOpenSubtitleEditor = () => {
+    setPlaying(false)
+    setShowSubtitleEditor(true)
   }
 
   const handleSubtitleEditorClose = () => {
     setShowSubtitleEditor(false)
-    setSubtitleData([])
   }
 
-  const handleSubtitleEditorSave = async (operations: VideoEditOperation[]) => {
-    if (!clip) return
-    
-    try {
-      // 提取要删除的字幕段ID
-      const deletedSegments = operations
-        .filter(op => op.type === 'delete')
-        .flatMap(op => op.segmentIds)
 
-      if (deletedSegments.length === 0) {
-        console.log('没有删除操作')
-        return
-      }
-
-      // 执行视频编辑
-      const result = await subtitleEditorApi.editClipBySubtitles(
-        projectId,
-        clip.id,
-        deletedSegments
-      )
-
-      if (result.success) {
-        console.log('视频编辑成功:', result)
-        // 这里可以添加成功提示
-        // 可以刷新片段列表或更新UI
-      }
-    } catch (error) {
-      console.error('视频编辑失败:', error)
-      // 这里可以添加错误提示
-    }
-  }
 
   if (!clip) return null
 
   return (
     <>
       <Modal
-        visible={visible}
+        open={visible}
         onCancel={handleClose}
         footer={null}
         width={800}
         centered
-        destroyOnClose
+        destroyOnHidden
         style={{ top: 20 }}
         styles={{
           body: {
@@ -204,7 +170,6 @@ const ClipDetailModal: React.FC<ClipDetailModalProps> = ({
               </div>
 
               {/* 操作按钮 */}
-              {console.log('Rendering operation buttons in ClipDetailModal')}
               <Space>
                 <Button 
                   type="primary" 
@@ -298,15 +263,13 @@ const ClipDetailModal: React.FC<ClipDetailModalProps> = ({
 
       {/* 字幕编辑器 */}
       {showSubtitleEditor && (
-        <>
-          {console.log('Rendering SubtitleEditor with:', { showSubtitleEditor, subtitleDataLength: subtitleData.length })}
-          <SubtitleEditor
+        <SubtitleEditor
+            projectId={projectId}
+            clipId={clip.id}
             videoUrl={projectApi.getClipVideoUrl(projectId, clip.id, clip.title || clip.generated_title)}
-            subtitles={subtitleData}
-            onSave={handleSubtitleEditorSave}
+            clipTitle={clip.generated_title || clip.title}
             onClose={handleSubtitleEditorClose}
           />
-        </>
       )}
     </>
   )

@@ -15,7 +15,6 @@
 
 **语言**: [English](README-EN.md) | [中文](README.md)  
 
-</div>
 
 ## 🎯 项目简介
 

@@ -59,3 +59,25 @@ export interface VideoEditResult {
   totalDeletedDuration: number
   finalDuration: number
 }
+
+// ─── 新增：SRT条目类型（字幕编辑器重构用）───
+
+export interface SrtEntry {
+  id: string        // uuid，前端生成
+  index: number     // SRT序号
+  startTime: number // 秒
+  endTime: number   // 秒
+  text: string      // 可含 \n 换行
+  disabled?: boolean // 禁用（烧录时过滤）
+}
+
+export interface SubtitlePreset {
+  id: string
+  label: string
+  color: string           // 字色 hex
+  outline_color?: string
+  back_color?: string     // 底色（含透明度）
+  outline: number
+  shadow?: number
+  bold?: number
+}

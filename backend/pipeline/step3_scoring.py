@@ -82,21 +82,31 @@ class ClipScorer:
         """
         try:
             # 输入给LLM的数据不需要包含所有字段，只给必要的
-            input_for_llm = [
-                {
-                    "outline": clip.get('outline'), 
-                    "content": clip.get('content'),
+            input_for_llm = []
+            for clip in clips:
+                content = clip.get('content')
+                # 防御：如果 content 仍然是长字符串，截断以避免 LLM 处理失败
+                if isinstance(content, str) and len(content) > 300:
+                    content = [content[:300]]
+                elif isinstance(content, str):
+                    content = [content]
+                input_for_llm.append({
+                    "outline": clip.get('outline'),
+                    "content": content,
                     "start_time": clip.get('start_time'),
                     "end_time": clip.get('end_time'),
-                } for clip in clips
-            ]
-            
+                })
+
             response = self.llm_client.call_with_retry(self.recommendation_prompt, input_for_llm)
             parsed_list = self.llm_client.parse_json_response(response)
-            
+
             if not isinstance(parsed_list, list) or len(parsed_list) != len(clips):
-                logger.error(f"LLM返回的评分结果数量与输入不匹配。输入: {len(clips)}, 输出: {len(parsed_list)}")
-                return []
+                logger.error(f"LLM返回的评分结果数量与输入不匹配。输入: {len(clips)}, 输出: {len(parsed_list) if isinstance(parsed_list, list) else 'not a list'}")
+                # 不丢弃整个 chunk，给默认分数让后续阈值过滤
+                for clip in clips:
+                    clip['final_score'] = 0.5
+                    clip['recommend_reason'] = "LLM评分数量不匹配，使用默认分数"
+                return clips
                 
             # 将评分结果合并回原始的clips数据
             for original_clip, llm_result in zip(clips, parsed_list):

@@ -3,7 +3,6 @@ B站相关数据库模型
 """
 
 from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -45,7 +44,7 @@ class BilibiliUploadRecord(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(100), unique=True, index=True)  # 任务队列ID
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True)
     account_id = Column(Integer, ForeignKey("bilibili_accounts.id"), nullable=False)
     clip_id = Column(String(255))  # 切片ID
     

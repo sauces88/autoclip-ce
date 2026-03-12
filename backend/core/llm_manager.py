@@ -15,11 +15,16 @@ from .llm_providers import (
 logger = logging.getLogger(__name__)
 
 class LLMManager:
-    """LLM管理器"""
-    
+    """LLM管理器 - 支持模型池轮换 + 跨提供商回退"""
+
     def __init__(self, settings_file: Optional[Path] = None):
         self.settings_file = settings_file or self._get_default_settings_file()
         self.current_provider: Optional[LLMProvider] = None
+        self.fallback_provider: Optional[LLMProvider] = None
+        self.model_pool: List[LLMProvider] = []      # 主提供商的多模型池
+        self._pool_index: int = 0                     # 当前使用的模型索引
+        self.fallback_pool: List[LLMProvider] = []    # 二级回退模型池（百炼等）
+        self._fallback_pool_index: int = 0
         self.settings = self._load_settings()
         self._initialize_provider()
     
@@ -63,40 +68,125 @@ class LLMManager:
             logger.error(f"保存设置失败: {e}")
             raise
     
+    def _create_provider_instance(self, provider_type: ProviderType, model_name: str) -> Optional[LLMProvider]:
+        """根据类型和模型名创建 provider 实例"""
+        api_key = self._get_api_key_for_provider(provider_type)
+        if not api_key:
+            return None
+        extra_kwargs = {}
+        if provider_type == ProviderType.OPENAI:
+            base_url = self.settings.get("openai_base_url", "")
+            if base_url:
+                extra_kwargs["base_url"] = base_url
+        elif provider_type == ProviderType.BAILIAN:
+            base_url = self.settings.get("bailian_base_url", "https://coding.dashscope.aliyuncs.com/v1")
+            extra_kwargs["base_url"] = base_url
+        elif provider_type == ProviderType.TENCENT:
+            base_url = self.settings.get("tencent_base_url", "https://api.lkeap.cloud.tencent.com/coding/v3")
+            extra_kwargs["base_url"] = base_url
+        return LLMProviderFactory.create_provider(
+            provider_type, api_key, model_name, **extra_kwargs
+        )
+
     def _initialize_provider(self):
-        """初始化当前提供商"""
+        """初始化主 provider、模型池和回退 provider"""
+        # --- 主 provider + 模型池 ---
+        self.model_pool = []
+        self._pool_index = 0
         try:
-            provider_type = ProviderType(self.settings.get("llm_provider", "dashscope"))
-            model_name = self.settings.get("model_name", "qwen-plus")
-            
-            # 获取对应提供商的API密钥
-            api_key = self._get_api_key_for_provider(provider_type)
-            
-            if api_key:
-                self.current_provider = LLMProviderFactory.create_provider(
-                    provider_type, api_key, model_name
-                )
-                logger.info(f"已初始化{provider_type.value}提供商，模型: {model_name}")
+            provider_type = ProviderType(
+                self.settings.get("llm_provider") or os.getenv("API_LLM_PROVIDER", "dashscope")
+            )
+            model_name = (
+                self.settings.get("model_name") or
+                os.getenv("API_MODEL_NAME", "qwen-plus")
+            )
+
+            # 构建模型池（同提供商多模型轮换）
+            pool_names = self.settings.get("gemini_model_pool", [])
+            if provider_type == ProviderType.GEMINI and pool_names:
+                # 确保主模型在池首位
+                if model_name not in pool_names:
+                    pool_names = [model_name] + pool_names
+                for name in pool_names:
+                    p = self._create_provider_instance(provider_type, name)
+                    if p:
+                        self.model_pool.append(p)
+                if self.model_pool:
+                    self.current_provider = self.model_pool[0]
+                    logger.info(
+                        f"已初始化 Gemini 模型池: {[p.model_name for p in self.model_pool]}"
+                    )
+                else:
+                    logger.warning("Gemini 模型池为空，未找到API密钥")
             else:
-                logger.warning(f"未找到{provider_type.value}的API密钥")
-                
+                self.current_provider = self._create_provider_instance(provider_type, model_name)
+                if self.current_provider:
+                    self.model_pool = [self.current_provider]
+                    logger.info(f"已初始化主 provider: {provider_type.value}，模型: {model_name}")
+                else:
+                    logger.warning(f"未找到{provider_type.value}的API密钥")
         except Exception as e:
-            logger.error(f"初始化提供商失败: {e}")
+            logger.error(f"初始化主 provider 失败: {e}")
             self.current_provider = None
+
+        # --- 二级回退模型池（百炼 + 腾讯） ---
+        self.fallback_pool = []
+        self._fallback_pool_index = 0
+        fallback_pools = [
+            ("bailian_api_key", "bailian_model_pool", ProviderType.BAILIAN, "百炼"),
+            ("tencent_api_key", "tencent_model_pool", ProviderType.TENCENT, "腾讯"),
+        ]
+        for key_field, pool_field, ptype, label in fallback_pools:
+            pool_names = self.settings.get(pool_field, [])
+            api_key = self.settings.get(key_field, "")
+            if api_key and pool_names:
+                try:
+                    for name in pool_names:
+                        p = self._create_provider_instance(ptype, name)
+                        if p:
+                            self.fallback_pool.append(p)
+                    logger.info(
+                        f"已初始化{label}模型池: {[p.model_name for p in self.fallback_pool if isinstance(p, LLMProviderFactory._providers[ptype])]}"
+                    )
+                except Exception as e:
+                    logger.warning(f"初始化{label}模型池失败: {e}")
+
+        # --- 回退 provider（最终兜底） ---
+        self.fallback_provider = None
+        fallback_type_str = self.settings.get("llm_fallback_provider", "")
+        fallback_model = self.settings.get("fallback_model_name", "")
+        if fallback_type_str and fallback_model:
+            try:
+                fallback_type = ProviderType(fallback_type_str)
+                self.fallback_provider = self._create_provider_instance(fallback_type, fallback_model)
+                if self.fallback_provider:
+                    logger.info(f"已初始化兜底 provider: {fallback_type.value}，模型: {fallback_model}")
+            except Exception as e:
+                logger.warning(f"初始化兜底 provider 失败: {e}")
     
     def _get_api_key_for_provider(self, provider_type: ProviderType) -> Optional[str]:
-        """获取指定提供商的API密钥"""
+        """获取指定提供商的API密钥，优先读settings.json，回退到环境变量"""
         key_mapping = {
-            ProviderType.DASHSCOPE: "dashscope_api_key",
-            ProviderType.OPENAI: "openai_api_key",
-            ProviderType.GEMINI: "gemini_api_key",
-            ProviderType.SILICONFLOW: "siliconflow_api_key",
+            ProviderType.DASHSCOPE: ("dashscope_api_key", "API_DASHSCOPE_API_KEY"),
+            ProviderType.OPENAI: ("openai_api_key", "OPENAI_API_KEY"),
+            ProviderType.GEMINI: ("gemini_api_key", "GEMINI_API_KEY"),
+            ProviderType.SILICONFLOW: ("siliconflow_api_key", "SILICONFLOW_API_KEY"),
+            ProviderType.BAILIAN: ("bailian_api_key", "BAILIAN_API_KEY"),
+            ProviderType.TENCENT: ("tencent_api_key", "TENCENT_API_KEY"),
         }
-        
-        key_name = key_mapping.get(provider_type)
-        if key_name:
-            return self.settings.get(key_name, "")
-        return None
+
+        entry = key_mapping.get(provider_type)
+        if not entry:
+            return None
+
+        settings_key, env_key = entry
+        # 优先 settings.json
+        key = self.settings.get(settings_key, "")
+        # 回退到环境变量
+        if not key:
+            key = os.getenv(env_key, "")
+        return key or None
     
     def update_settings(self, new_settings: Dict[str, Any]):
         """更新设置"""
@@ -147,23 +237,102 @@ class LLMManager:
             response = self.current_provider.call(prompt, input_data, **kwargs)
             return response.content
         except Exception as e:
-            logger.error(f"LLM调用失败: {e}")
+            logger.error(f"LLM调用失败: {str(e).splitlines()[0][:150]}")
             raise
     
+    @staticmethod
+    def _is_rate_limit_error(err_str: str) -> bool:
+        """判断是否为 429 限流错误"""
+        lower = err_str.lower()
+        return "429" in err_str or "quota" in lower or "rate" in lower or "resource_exhausted" in lower
+
     def call_with_retry(self, prompt: str, input_data: Any = None, max_retries: int = 3, **kwargs) -> str:
-        """带重试机制的LLM调用"""
+        """带重试 + 模型池轮换 + 跨提供商回退的 LLM 调用
+
+        流程：
+        1. 用当前模型调用
+        2. 遇到 429 → 轮换到池中下一个模型（不等待）
+        3. 池中所有模型都 429 → 切到回退 provider（不等待）
+        4. 回退也失败 → 等待后重试
+        """
+        import time
+        import re as _re
+
         for attempt in range(max_retries):
+            # --- 尝试当前 provider ---
             try:
                 return self.call(prompt, input_data, **kwargs)
-            except ValueError:  # 如果是API Key或参数错误，不重试
+            except ValueError:
                 raise
             except Exception as e:
+                err_str = str(e)
+                is_rate_limit = self._is_rate_limit_error(err_str)
+
+                if is_rate_limit:
+                    # --- 429: 尝试池中其他模型 ---
+                    if len(self.model_pool) > 1:
+                        for offset in range(1, len(self.model_pool)):
+                            next_idx = (self._pool_index + offset) % len(self.model_pool)
+                            next_provider = self.model_pool[next_idx]
+                            logger.warning(
+                                f"模型 {self.current_provider.model_name} 限流，"
+                                f"轮换到 {next_provider.model_name}"
+                            )
+                            try:
+                                response = next_provider.call(prompt, input_data, **kwargs)
+                                # 成功，切换当前指针
+                                self._pool_index = next_idx
+                                self.current_provider = next_provider
+                                return response.content
+                            except Exception as pool_e:
+                                if self._is_rate_limit_error(str(pool_e)):
+                                    continue  # 这个也限流了，试下一个
+                                # 非限流错误，跳出池轮换
+                                logger.warning(f"模型 {next_provider.model_name} 失败: {str(pool_e)[:200]}")
+                                break
+
+                    # --- 主池全部限流，尝试百炼模型池 ---
+                    if self.fallback_pool:
+                        for offset in range(len(self.fallback_pool)):
+                            idx = (self._fallback_pool_index + offset) % len(self.fallback_pool)
+                            bp = self.fallback_pool[idx]
+                            logger.warning(f"主模型池限流，尝试百炼 {bp.model_name}")
+                            try:
+                                response = bp.call(prompt, input_data, **kwargs)
+                                self._fallback_pool_index = (idx + 1) % len(self.fallback_pool)
+                                return response.content
+                            except Exception as bp_e:
+                                if self._is_rate_limit_error(str(bp_e)):
+                                    continue
+                                logger.warning(f"百炼 {bp.model_name} 失败: {str(bp_e)[:200]}")
+                                break
+
+                    # --- 百炼也失败，切到最终兜底 provider ---
+                    if self.fallback_provider:
+                        logger.warning(f"所有模型池限流，切换到兜底 provider")
+                        try:
+                            response = self.fallback_provider.call(prompt, input_data, **kwargs)
+                            return response.content
+                        except Exception as fb_e:
+                            logger.warning(f"兜底 provider 也失败: {str(fb_e)[:200]}")
+
+                # --- 最后一次重试也失败 ---
                 if attempt == max_retries - 1:
                     logger.error(f"LLM调用在{max_retries}次重试后彻底失败。")
                     raise
-                logger.warning(f"第{attempt + 1}次调用失败，准备重试: {str(e)}")
-                import time
-                time.sleep(2 ** attempt)  # 指数退避
+
+                # --- 等待后重试 ---
+                wait_time = 2 ** attempt
+                if is_rate_limit:
+                    match = _re.search(r'retry\s+in\s+([\d.]+)s', err_str, _re.IGNORECASE)
+                    if match:
+                        wait_time = min(float(match.group(1)) + 2, 120)
+                    else:
+                        wait_time = max(30, 2 ** attempt * 15)
+                    logger.warning(f"全部限流，等待 {wait_time:.0f}s 后重试 ({attempt + 1}/{max_retries})")
+                else:
+                    logger.warning(f"第{attempt + 1}次调用失败，{wait_time}s后重试: {err_str.splitlines()[0][:120]}")
+                time.sleep(wait_time)
         return ""
     
     def test_provider_connection(self, provider_type: ProviderType, api_key: str, model_name: str) -> bool:
@@ -196,7 +365,9 @@ class LLMManager:
             ProviderType.DASHSCOPE: "阿里通义千问",
             ProviderType.OPENAI: "OpenAI",
             ProviderType.GEMINI: "Google Gemini",
-            ProviderType.SILICONFLOW: "硅基流动"
+            ProviderType.SILICONFLOW: "硅基流动",
+            ProviderType.BAILIAN: "阿里云百炼",
+            ProviderType.TENCENT: "腾讯云",
         }
         return display_names.get(provider_type, provider_type.value)
     

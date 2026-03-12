@@ -55,7 +55,7 @@ const HomePage: React.FC = () => {
   // })
 
   // 使用项目轮询Hook
-  const { refreshNow } = useProjectPolling({
+  useProjectPolling({
     onProjectsUpdate: (updatedProjects) => {
       setProjects(updatedProjects || [])
     },
@@ -71,13 +71,12 @@ const HomePage: React.FC = () => {
     setLoading(true)
     try {
       // 从后端API获取真实项目数据
-      const projects = await projectApi.getProjects()
-      setProjects(projects || [])
+      const fetchedProjects = await projectApi.getProjects()
+      setProjects(fetchedProjects || [])
     } catch (error) {
-      message.error('加载项目失败')
+      message.error('加载项目失败，显示缓存数据')
       console.error('Load projects error:', error)
-      // 如果API调用失败，设置空数组
-      setProjects([])
+      // 失败时保留已有数据，不清空
     } finally {
       setLoading(false)
     }
@@ -128,38 +127,6 @@ const HomePage: React.FC = () => {
     }
   }
 
-  const handleStartProcessing = async (projectId: string) => {
-    try {
-      await projectApi.startProcessing(projectId)
-      message.success('项目已开始处理，请稍等片刻查看进度')
-      // 立即刷新项目列表以显示最新状态
-      setTimeout(async () => {
-        try {
-          await refreshNow()
-        } catch (refreshError) {
-          console.error('Failed to refresh after starting processing:', refreshError)
-        }
-      }, 1000)
-    } catch (error: unknown) {
-      const errorMessage = (error as { userMessage?: string })?.userMessage || '启动处理失败'
-      message.error(errorMessage)
-      console.error('Start processing error:', error)
-      
-      // 如果是超时错误，提示用户项目可能仍在处理
-      if ((error as { code?: string; message?: string })?.code === 'ECONNABORTED' || (error as { code?: string; message?: string })?.message?.includes('timeout')) {
-        message.info('请求超时，但项目可能已开始处理，请查看项目状态', 5)
-        // 延迟刷新项目列表
-        setTimeout(async () => {
-          try {
-            await refreshNow()
-          } catch (refreshError) {
-            console.error('Failed to refresh after timeout:', refreshError)
-          }
-        }, 3000)
-      }
-    }
-  }
-
   const handleProjectCardClick = (project: Project) => {
     // 导入中状态的项目不能点击进入详情页
     if (project.status === 'pending') {
@@ -172,10 +139,7 @@ const HomePage: React.FC = () => {
   }
 
   const filteredProjects = projects
-    .filter(project => {
-      const matchesStatus = statusFilter === 'all' || project.status === statusFilter
-      return matchesStatus
-    })
+    .filter(project => statusFilter === 'all' || project.status === statusFilter)
     .sort((a, b) => {
       // 按创建时间倒序排列，最新的在前面
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -252,14 +216,14 @@ const HomePage: React.FC = () => {
               {/* 内容区域 */}
               <div>
                 {activeTab === 'bilibili' && (
-                  <BilibiliDownload onDownloadSuccess={async (projectId: string) => {
+                  <BilibiliDownload onDownloadSuccess={async () => {
                     // 处理完成后刷新项目列表
                     await loadProjects()
                     // 不再显示重复的toast提示，BilibiliDownload组件已经显示了统一的提示
                   }} />
                 )}
                 {activeTab === 'upload' && (
-                  <FileUpload onUploadSuccess={async (projectId: string) => {
+                  <FileUpload onUploadSuccess={async () => {
                     // 处理完成后刷新项目列表
                     await loadProjects()
                     message.success('项目创建成功，正在处理中...')
@@ -367,17 +331,17 @@ const HomePage: React.FC = () => {
 
             {/* 项目列表内容 */}
              <div>
-               {loading ? (
-                 <div style={{ 
-                   textAlign: 'center', 
+               {loading && filteredProjects.length === 0 ? (
+                 <div style={{
+                   textAlign: 'center',
                    padding: '60px 0',
                    background: '#262626',
                    borderRadius: '12px',
                    border: '1px solid #404040'
                  }}>
                    <Spin size="large" />
-                   <div style={{ 
-                     marginTop: '20px', 
+                   <div style={{
+                     marginTop: '20px',
                      color: '#cccccc',
                      fontSize: '16px'
                    }}>

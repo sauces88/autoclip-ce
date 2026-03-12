@@ -308,7 +308,7 @@ const UploadModal: React.FC<UploadModalProps> = ({
       onCancel={handleCancel}
       footer={null}
       width={700}
-      destroyOnClose
+      destroyOnHidden
       maskClosable={!uploading}
       closable={!uploading}
     >

@@ -42,60 +42,43 @@ class SimplePipelineAdapter:
             from backend.services.simple_progress import emit_progress
             emit_progress(self.project_id, "SUBTITLE", "正在使用AI生成字幕...", subpercent=25)
             
-            # 尝试使用bcut-asr
             try:
                 from backend.utils.speech_recognizer import generate_subtitle_for_video
                 from pathlib import Path
-                
+
                 video_file_path = Path(video_path)
                 if not video_file_path.exists():
                     logger.error(f"视频文件不存在: {video_path}")
                     return None
-                
-                # 使用bcut-asr生成字幕
-                logger.info("尝试使用bcut-asr生成字幕")
+
+                logger.info("使用 Seed ASR AUC 生成字幕")
                 output_path = metadata_dir / f"{video_file_path.stem}.srt"
                 srt_path = generate_subtitle_for_video(
                     video_file_path,
                     output_path=output_path,
                     method="auto",
                     model="base",
-                    language="auto"
+                    language="auto",
+                    metadata_dir=metadata_dir,
                 )
-                
+
                 if srt_path and srt_path.exists():
-                    logger.info(f"bcut-asr生成字幕成功: {srt_path}")
+                    logger.info(f"ASR 字幕生成成功: {srt_path}")
+                    # 诊断：检查 asr_raw_utterances.json
+                    raw_utt_path = metadata_dir / "asr_raw_utterances.json"
+                    if raw_utt_path.exists():
+                        logger.info(f"asr_raw_utterances.json 已保存 ({raw_utt_path.stat().st_size} bytes)")
+                    else:
+                        logger.warning("asr_raw_utterances.json 未生成")
                     emit_progress(self.project_id, "SUBTITLE", "AI字幕生成完成", subpercent=40)
                     return srt_path
                 else:
-                    logger.warning("bcut-asr生成字幕失败")
-                    
+                    logger.warning("ASR 字幕生成失败")
+
             except Exception as e:
-                logger.warning(f"bcut-asr生成字幕失败: {e}")
-            
-            # 如果bcut-asr失败，尝试使用Whisper本地模型
-            try:
-                logger.info("尝试使用Whisper本地模型生成字幕")
-                output_path = metadata_dir / f"{Path(video_path).stem}.srt"
-                srt_path = generate_subtitle_for_video(
-                    Path(video_path),
-                    output_path=output_path,
-                    method="whisper_local",
-                    model="base",
-                    language="auto"
-                )
-                
-                if srt_path and srt_path.exists():
-                    logger.info(f"Whisper生成字幕成功: {srt_path}")
-                    emit_progress(self.project_id, "SUBTITLE", "AI字幕生成完成", subpercent=40)
-                    return srt_path
-                else:
-                    logger.warning("Whisper生成字幕失败")
-                    
-            except Exception as e:
-                logger.warning(f"Whisper生成字幕失败: {e}")
-            
-            logger.error("所有ASR方法都失败了")
+                logger.warning(f"ASR 字幕生成失败: {e}")
+
+            logger.error("ASR 字幕生成失败")
             return None
             
         except Exception as e:
@@ -244,8 +227,53 @@ class SimplePipelineAdapter:
                 emit_progress(self.project_id, "HIGHLIGHT", "片段定位完成", subpercent=100)
                 emit_progress(self.project_id, "EXPORT", "开始视频导出")
                 video_result = {"status": "skipped", "message": "没有内容可处理"}
+            # Step 7: 字幕纠错，生成SRT（不烧录）
+            logger.info("执行Step 7: 字幕纠错生成SRT")
+            emit_progress(self.project_id, "EXPORT", "字幕纠错生成中...", subpercent=55)
+            subs_dir = output_dir / "clips_with_subs"
+            subs_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                from backend.pipeline.step7_subtitle_burn import run_step7_srt_only
+                asr_utterances_path = metadata_dir / "asr_raw_utterances.json"
+                if asr_utterances_path.exists():
+                    logger.info(f"检测到 asr_raw_utterances.json，Step 7 将使用 utterances 模式")
+                else:
+                    logger.info("未检测到 asr_raw_utterances.json，Step 7 将使用 SRT 降级模式")
+                # 诊断：检查 clips_metadata.json
+                clips_meta_path = metadata_dir / "clips_metadata.json"
+                if clips_meta_path.exists():
+                    logger.info(f"clips_metadata.json 存在 ({clips_meta_path.stat().st_size} bytes)")
+                else:
+                    logger.warning("clips_metadata.json 不存在，Step 7 将跳过")
+                subtitle_result = run_step7_srt_only(
+                    clips_metadata_path=clips_meta_path,
+                    input_srt_path=Path(input_srt_path) if input_srt_path else None,
+                    output_dir=subs_dir,
+                    metadata_dir=metadata_dir,
+                    asr_utterances_path=asr_utterances_path,
+                )
+                logger.info(f"Step 7 完成: {subtitle_result}")
+            except Exception as e:
+                logger.error(f"Step 7 失败（非致命）: {e}")
+                subtitle_result = {"status": "failed", "error": str(e)}
+
+            # Step 8: 封面制作（非致命），封面与字幕视频放同一目录
+            logger.info("执行Step 8: 封面制作")
+            emit_progress(self.project_id, "EXPORT", "封面制作中...", subpercent=75)
+            try:
+                from backend.pipeline.step8_cover import run_step8_cover
+                cover_result = run_step8_cover(
+                    clips_metadata_path=metadata_dir / "clips_metadata.json",
+                    output_dir=subs_dir,
+                    metadata_dir=metadata_dir,
+                )
+                logger.info(f"Step 8 完成: {cover_result}")
+            except Exception as e:
+                logger.error(f"Step 8 失败（非致命）: {e}")
+                cover_result = {"status": "failed", "error": str(e)}
+
             emit_progress(self.project_id, "EXPORT", "视频导出完成", subpercent=100)
-            
+
             # 阶段6: 处理完成
             emit_progress(self.project_id, "DONE", "处理完成")
             

@@ -72,7 +72,7 @@ const CreateCollectionModal: React.FC<CreateCollectionModalProps> = ({
       footer={null}
       width={900}
       className="create-collection-modal"
-      destroyOnClose
+      destroyOnHidden
     >
       <div className="modal-content">
         {/* 头部 */}

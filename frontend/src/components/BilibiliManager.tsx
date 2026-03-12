@@ -493,7 +493,7 @@ const BilibiliManager: React.FC<BilibiliManagerProps> = ({
       onCancel={onClose}
       footer={null}
       width={800}
-      destroyOnClose
+      destroyOnHidden
       className="bilibili-manager-modal"
     >
       {/* 自定义标题栏 */}

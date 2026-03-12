@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Tag, Button, Space, Typography, Progress, Popconfirm, message, Tooltip } from 'antd'
-import { PlayCircleOutlined, DeleteOutlined, EyeOutlined, DownloadOutlined, ReloadOutlined, LoadingOutlined } from '@ant-design/icons'
+import { Card, Tag, Button, Space, Typography, Popconfirm, message, Tooltip } from 'antd'
+import { PlayCircleOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { Project } from '../store/useProjectStore'
 import { projectApi } from '../services/api'
 import { UnifiedStatusBar } from './UnifiedStatusBar'
-// import { 
-//   getProjectStatusConfig, 
-//   calculateProjectProgress, 
+// import {
+//   getProjectStatusConfig,
+//   calculateProjectProgress,
 //   normalizeProjectStatus,
-//   getProgressStatus 
+//   getProgressStatus
 // } from '../utils/statusUtils'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -47,8 +47,7 @@ if (typeof document !== 'undefined') {
   document.head.appendChild(style)
 }
 
-const { Text, Title } = Typography
-const { Meta } = Card
+const { Text } = Typography
 
 interface ProjectCardProps {
   project: Project
@@ -57,20 +56,11 @@ interface ProjectCardProps {
   onClick?: () => void
 }
 
-interface LogEntry {
-  timestamp: string
-  module: string
-  level: string
-  message: string
-}
-
 const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, onClick }) => {
   const navigate = useNavigate()
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null)
   const [thumbnailLoading, setThumbnailLoading] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [currentLogIndex, setCurrentLogIndex] = useState(0)
 
   // 获取分类信息
   const getCategoryInfo = (category?: string) => {
@@ -89,7 +79,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
 
   // 缩略图缓存管理
   const thumbnailCacheKey = `thumbnail_${project.id}`
-  
+
   // 生成项目视频缩略图（带缓存）
   useEffect(() => {
     const generateThumbnail = async () => {
@@ -99,27 +89,27 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
         console.log(`使用后端提供的缩略图: ${project.id}`)
         return
       }
-      
+
       if (!project.video_path) {
         console.log('项目没有视频路径:', project.id)
         return
       }
-      
+
       // 检查缓存
       const cachedThumbnail = localStorage.getItem(thumbnailCacheKey)
       if (cachedThumbnail) {
         setVideoThumbnail(cachedThumbnail)
         return
       }
-      
+
       setThumbnailLoading(true)
-      
+
       try {
         const video = document.createElement('video')
         video.crossOrigin = 'anonymous'
         video.muted = true
         video.preload = 'metadata'
-        
+
         // 尝试多个可能的视频文件路径
         const possiblePaths = [
           'input/input.mp4',
@@ -127,27 +117,27 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
           project.video_path,
           `${project.video_path}/input.mp4`
         ].filter(Boolean)
-        
+
         let videoLoaded = false
-        
+
         for (const path of possiblePaths) {
           if (videoLoaded) break
-          
+
           try {
             const videoUrl = projectApi.getProjectFileUrl(project.id, path)
             console.log('尝试加载视频:', videoUrl)
-            
+
             await new Promise((resolve, reject) => {
               const timeoutId = setTimeout(() => {
                 reject(new Error('视频加载超时'))
               }, 10000) // 10秒超时
-              
+
               video.onloadedmetadata = () => {
                 clearTimeout(timeoutId)
                 console.log('视频元数据加载成功:', videoUrl)
                 video.currentTime = Math.min(5, video.duration / 4) // 取视频1/4处或5秒处的帧
               }
-              
+
               video.onseeked = () => {
                 clearTimeout(timeoutId)
                 try {
@@ -157,28 +147,28 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                     reject(new Error('无法获取canvas上下文'))
                     return
                   }
-                  
+
                   // 设置合适的缩略图尺寸
                   const maxWidth = 320
                   const maxHeight = 180
                   const aspectRatio = video.videoWidth / video.videoHeight
-                  
+
                   let width = maxWidth
                   let height = maxHeight
-                  
+
                   if (aspectRatio > maxWidth / maxHeight) {
                     height = maxWidth / aspectRatio
                   } else {
                     width = maxHeight * aspectRatio
                   }
-                  
+
                   canvas.width = width
                   canvas.height = height
                   ctx.drawImage(video, 0, 0, width, height)
-                  
+
                   const thumbnail = canvas.toDataURL('image/jpeg', 0.7)
                   setVideoThumbnail(thumbnail)
-                  
+
                   // 缓存缩略图
                   try {
                     localStorage.setItem(thumbnailCacheKey, thumbnail)
@@ -190,30 +180,30 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                       localStorage.setItem(thumbnailCacheKey, thumbnail)
                     }
                   }
-                  
+
                   videoLoaded = true
                   resolve(thumbnail)
                 } catch (error) {
                   reject(error)
                 }
               }
-              
+
               video.onerror = (error) => {
                 clearTimeout(timeoutId)
                 console.error('视频加载失败:', videoUrl, error)
                 reject(error)
               }
-              
+
               video.src = videoUrl
             })
-            
+
             break // 如果成功加载，跳出循环
           } catch (error) {
             console.warn(`路径 ${path} 加载失败:`, error)
             continue // 尝试下一个路径
           }
         }
-        
+
         if (!videoLoaded) {
           console.error('所有视频路径都加载失败')
         }
@@ -223,89 +213,29 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
         setThumbnailLoading(false)
       }
     }
-    
+
     generateThumbnail()
   }, [project.id, project.video_path, thumbnailCacheKey])
 
-  // 获取项目日志（仅在处理中时）
-  useEffect(() => {
-    if (project.status !== 'processing') {
-      setLogs([])
-      return
-    }
-
-    const fetchLogs = async () => {
-      try {
-        const response = await projectApi.getProjectLogs(project.id, 20)
-        setLogs(response.logs.filter(log => 
-          log.message.includes('Step') || 
-          log.message.includes('开始') || 
-          log.message.includes('完成') ||
-          log.message.includes('处理') ||
-          log.level === 'ERROR'
-        ))
-      } catch (error) {
-        console.error('获取日志失败:', error)
-      }
-    }
-
-    // 立即获取一次
-    fetchLogs()
-    
-    // 每3秒更新一次日志
-    const logInterval = setInterval(fetchLogs, 3000)
-    
-    return () => clearInterval(logInterval)
-  }, [project.id, project.status])
-
-  // 日志轮播
-  useEffect(() => {
-    if (logs.length <= 1) return
-    
-    const interval = setInterval(() => {
-      setCurrentLogIndex(prev => (prev + 1) % logs.length)
-    }, 2000) // 每2秒切换一条日志
-    
-    return () => clearInterval(interval)
-  }, [logs.length])
-
-  const getStatusColor = (status: Project['status']) => {
-    switch (status) {
-      case 'completed': return 'success'
-      case 'processing': return 'processing'
-      case 'error': return 'error'
-      case 'uploading': return 'default'
-      default: return 'default'
-    }
-  }
 
   // 检查是否是等待处理状态 - pending状态显示为导入中
   const isImporting = project.status === 'pending'
-  
+
   // 状态标准化处理 - pending状态显示为导入中
-  const normalizedStatus = project.status === 'error' ? 'failed' : 
+  const normalizedStatus = project.status === 'error' ? 'failed' :
                           isImporting ? 'importing' : project.status
-  
-  // 调试信息
-  console.log('ProjectCard Debug:', {
-    projectId: project.id,
-    projectStatus: project.status,
-    isImporting,
-    normalizedStatus,
-    processingConfig: project.processing_config
-  })
-  
+
   // 计算进度百分比
-  const progressPercent = project.status === 'completed' ? 100 : 
+  const progressPercent = project.status === 'completed' ? 100 :
                          project.status === 'failed' ? 0 :
                          isImporting ? 20 : // 导入中显示20%进度
-                         project.current_step && project.total_steps ? 
-                         Math.round((project.current_step / project.total_steps) * 100) : 
+                         project.current_step && project.total_steps ?
+                         Math.round((project.current_step / project.total_steps) * 100) :
                          project.status === 'processing' ? 10 : 0
 
   const handleRetry = async () => {
     if (isRetrying) return
-    
+
     setIsRetrying(true)
     try {
       // 对于PENDING状态的项目，使用startProcessing；对于其他状态，使用retryProcessing
@@ -318,9 +248,11 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
       if (onRetry) {
         onRetry(project.id)
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      const msg = (error as { userMessage?: string })?.userMessage || detail || '重试失败，请稍后再试'
       console.error('重试失败:', error)
-      message.error('重试失败，请稍后再试')
+      message.error(msg)
     } finally {
       setIsRetrying(false)
     }
@@ -330,8 +262,8 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
     <Card
       hoverable
       className="project-card"
-      style={{ 
-        width: 200, 
+      style={{
+        width: 200,
         height: 240,
         borderRadius: '4px',
         overflow: 'hidden',
@@ -358,12 +290,12 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
         flexDirection: 'column'
       }}
       cover={
-        <div 
-          style={{ 
-            height: 120, 
+        <div
+          style={{
+            height: 120,
             position: 'relative',
-            background: videoThumbnail 
-              ? `url(${videoThumbnail}) center/cover` 
+            background: videoThumbnail
+              ? `url(${videoThumbnail}) center/cover`
               : 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
             display: 'flex',
             alignItems: 'center',
@@ -376,7 +308,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
               message.warning('项目正在导入中，请稍后再查看详情')
               return
             }
-            
+
             if (onClick) {
               onClick()
             } else {
@@ -386,17 +318,17 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
         >
           {/* 缩略图加载状态 */}
           {thumbnailLoading && (
-            <div style={{ 
+            <div style={{
               textAlign: 'center',
               color: 'rgba(255, 255, 255, 0.8)'
             }}>
-              <LoadingOutlined 
-                style={{ 
-                  fontSize: '24px', 
+              <LoadingOutlined
+                style={{
+                  fontSize: '24px',
                   marginBottom: '4px'
-                }} 
+                }}
               />
-              <div style={{ 
+              <div style={{
                 fontSize: '12px',
                 fontWeight: 500
               }}>
@@ -404,20 +336,20 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
               </div>
             </div>
           )}
-          
+
           {/* 无缩略图时的默认显示 */}
           {!videoThumbnail && !thumbnailLoading && (
             <div style={{ textAlign: 'center' }}>
-              <PlayCircleOutlined 
-                style={{ 
-                  fontSize: '40px', 
+              <PlayCircleOutlined
+                style={{
+                  fontSize: '40px',
                   color: 'rgba(255, 255, 255, 0.9)',
                   marginBottom: '4px',
                   filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))'
-                }} 
+                }}
               />
-              <div style={{ 
-                color: 'rgba(255, 255, 255, 0.8)', 
+              <div style={{
+                color: 'rgba(255, 255, 255, 0.8)',
                 fontSize: '12px',
                 fontWeight: 500
               }}>
@@ -425,7 +357,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
               </div>
             </div>
           )}
-          
+
           {/* 分类标签 - 左上角 */}
           {project.video_category && project.video_category !== 'default' && (
             <div style={{
@@ -452,9 +384,9 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
               </Tag>
             </div>
           )}
-          
+
           {/* 移除右上角状态指示器 - 可读性差且冗余 */}
-          
+
           {/* 更新时间和操作按钮 - 移动到封面底部 */}
           <div style={{
             position: 'absolute',
@@ -473,9 +405,9 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
             <Text style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.8)' }}>
               {dayjs(project.created_at).tz('Asia/Shanghai').fromNow()}
             </Text>
-            
+
             {/* 操作按钮 */}
-            <div 
+            <div
               className="card-action-buttons"
               style={{
                 display: 'flex',
@@ -507,7 +439,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                       fontSize: '10px'
                     }}
                   />
-                  
+
                   <Popconfirm
                     title="确定要删除这个项目吗？"
                     description="删除后无法恢复"
@@ -570,7 +502,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                         />
                       </Tooltip>
                     )}
-                    
+
                     {/* 下载按钮 - 仅在完成状态显示 */}
                     {normalizedStatus === 'completed' && (
                       <Button
@@ -594,7 +526,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                         }}
                       />
                     )}
-                    
+
                     {/* 删除按钮 */}
                     <Popconfirm
                       title="确定要删除这个项目吗？"
@@ -641,10 +573,10 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
           {/* 项目名称 - 始终在顶部 */}
           <div style={{ marginBottom: '12px', position: 'relative' }}>
             <Tooltip title={project.name} placement="top">
-              <Text 
-                strong 
-                style={{ 
-                  fontSize: '13px', 
+              <Text
+                strong
+                style={{
+                  fontSize: '13px',
                   color: '#ffffff',
                   fontWeight: 600,
                   lineHeight: '16px',
@@ -661,12 +593,12 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
               </Text>
             </Tooltip>
           </div>
-          
+
           {/* 状态和统计信息 */}
           {(normalizedStatus === 'importing' || normalizedStatus === 'processing' || normalizedStatus === 'failed') ? (
             // 导入中、处理中、失败：只显示状态块，居中展示
-            <div style={{ 
-              display: 'flex', 
+            <div style={{
+              display: 'flex',
               justifyContent: 'center',
               marginBottom: '12px'
             }}>
@@ -686,8 +618,8 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
             </div>
           ) : (
             // 其他状态：显示状态块 + 切片数 + 合集数
-            <div style={{ 
-              display: 'flex', 
+            <div style={{
+              display: 'flex',
               gap: '6px',
               marginBottom: '12px'
             }}>
@@ -705,7 +637,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                   }}
                 />
               </div>
-              
+
               {/* 切片数量 - 减小宽度 */}
               <div style={{
                 background: 'rgba(102, 126, 234, 0.15)',
@@ -723,7 +655,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onDelete, onRetry, o
                   切片
                 </div>
               </div>
-              
+
               {/* 合集数量 - 减小宽度 */}
               <div style={{
                 background: 'rgba(118, 75, 162, 0.15)',

@@ -14,39 +14,34 @@ export const useProjectPolling = ({
   enabled = true
 }: UseProjectPollingOptions = {}) => {
   const [isPolling, setIsPolling] = useState(false)
-  const intervalRef = useRef<number | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now())
-  const isDragging = useProjectStore(state => state.isDragging)
 
     const startPolling = () => {
     if (!enabled || intervalRef.current) return
 
     setIsPolling(true)
-    
+
     const poll = async () => {
       try {
         // 实时获取isDragging状态
         const currentIsDragging = useProjectStore.getState().isDragging
-        
+
         // 如果正在拖拽，跳过这次轮询
         if (currentIsDragging) {
-          console.log('Skipping poll: dragging in progress')
           return
         }
-        
-        console.log('Polling projects...')
+
         const projects = await projectApi.getProjects()
-        console.log('Polled projects:', projects)
-        
+
         const hasProcessingProjects = projects.some(p => p.status === 'processing')
-        
+
         if (onProjectsUpdate) {
-          console.log('Calling onProjectsUpdate with:', projects)
           onProjectsUpdate(projects)
         }
-        
+
         setLastUpdateTime(Date.now())
-        
+
         // 如果没有正在处理的项目，可以适当减少轮询频率
         if (!hasProcessingProjects) {
           // 可以在这里实现动态调整轮询频率的逻辑
@@ -58,7 +53,7 @@ export const useProjectPolling = ({
 
     // 立即执行一次
     poll()
-    
+
     // 设置定时器
     intervalRef.current = setInterval(poll, interval)
   }

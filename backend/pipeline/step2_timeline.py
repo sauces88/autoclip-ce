@@ -208,32 +208,123 @@ class TimelineExtractor:
 
         return all_timeline_data
         
+    def _normalize_response_items(self, parsed_data: Any) -> List[Dict]:
+        """
+        归一化LLM响应：将各种变体格式转换为标准格式。
+        标准格式: [{"outline": str, "content": ..., "start_time": "HH:MM:SS,mmm", "end_time": "HH:MM:SS,mmm"}]
+        """
+        items = []
+
+        # 确保是列表
+        if isinstance(parsed_data, dict):
+            # 单个对象包装成列表
+            parsed_data = [parsed_data]
+        if not isinstance(parsed_data, list):
+            return []
+
+        for raw in parsed_data:
+            if not isinstance(raw, dict):
+                continue
+
+            item = dict(raw)
+
+            # --- 字段名映射 ---
+            # outline: title / heading / topic → outline
+            if 'outline' not in item:
+                for alt in ('title', 'heading', 'topic', 'name', 'subject'):
+                    if alt in item:
+                        item['outline'] = item.pop(alt)
+                        break
+
+            # 如果仍然没有 outline，尝试从 content 截取
+            if 'outline' not in item and 'content' in item:
+                c = item['content']
+                if isinstance(c, str):
+                    item['outline'] = c[:50].rstrip('，。,.')
+                elif isinstance(c, list) and c:
+                    item['outline'] = str(c[0])[:50].rstrip('，。,.')
+
+            # --- 时间字段处理 ---
+            # 情况1: "time": "00:00:00 - 00:05:00" 范围格式
+            if 'time' in item and 'start_time' not in item:
+                time_val = str(item.pop('time'))
+                # 支持多种分隔符: " - ", " ~ ", "~", "-", "到"
+                m = re.match(r'([\d:,.]+)\s*[-~到]\s*([\d:,.]+)', time_val)
+                if m:
+                    item['start_time'] = m.group(1).strip()
+                    item['end_time'] = m.group(2).strip()
+
+            # 情况2: start / end 等别名
+            for src, dst in [('start', 'start_time'), ('begin', 'start_time'),
+                             ('end', 'end_time'), ('finish', 'end_time'),
+                             ('begin_time', 'start_time'), ('startTime', 'start_time'),
+                             ('endTime', 'end_time')]:
+                if src in item and dst not in item:
+                    item[dst] = item.pop(src)
+
+            # --- 时间格式补全: "00:05:00" → "00:05:00,000" ---
+            for key in ('start_time', 'end_time'):
+                if key in item:
+                    t = str(item[key]).strip()
+                    # HH:MM:SS (无毫秒) → HH:MM:SS,000
+                    if re.match(r'^\d{2}:\d{2}:\d{2}$', t):
+                        t += ',000'
+                    # HH:MM:SS.mmm → HH:MM:SS,mmm
+                    t = re.sub(r'^(\d{2}:\d{2}:\d{2})\.(\d{3})$', r'\1,\2', t)
+                    # H:MM:SS → 0H:MM:SS
+                    if re.match(r'^\d:\d{2}:\d{2}', t):
+                        t = '0' + t
+                    item[key] = t
+
+            # --- content 格式归一化：确保 content 始终为列表 ---
+            if 'content' in item:
+                c = item['content']
+                if isinstance(c, str):
+                    if len(c) > 200:
+                        # 长文本（原始转录）按句号/换行分割为要点
+                        sentences = re.split(r'[。！？\n]+', c)
+                        sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 5]
+                        item['content'] = sentences[:8] if sentences else [c[:200]]
+                    else:
+                        item['content'] = [c]
+                elif not isinstance(c, list):
+                    item['content'] = []
+
+            # --- 处理 sections 结构 (无时间信息，跳过) ---
+            if 'sections' in item and 'start_time' not in item:
+                logger.debug(f"  > 跳过无时间信息的 sections 结构: {item.get('outline', item.get('title', ''))[:30]}")
+                continue
+
+            # 只有同时有 outline 和时间字段才保留
+            if 'outline' in item and 'start_time' in item and 'end_time' in item:
+                items.append(item)
+            else:
+                logger.debug(f"  > 归一化后仍缺字段，跳过: {list(item.keys())}")
+
+        return items
+
     def _parse_and_validate_response(self, response: str, chunk_start: str, chunk_end: str, chunk_index: int) -> List[Dict]:
         """增强的解析LLM的批量响应、验证并调整时间"""
         validated_items = []
-        
+
         # 保存原始响应用于调试
         self._save_debug_response(response, chunk_index, "original_response")
-        
+
         try:
             # 尝试解析JSON
             parsed_response = self.llm_client.parse_json_response(response)
-            
-            # 验证JSON结构
-            if not self.llm_client._validate_json_structure(parsed_response):
-                logger.error(f"  > 块 {chunk_index} JSON结构验证失败")
-                self._save_debug_response(str(parsed_response), chunk_index, "invalid_structure")
+
+            # 归一化：将各种变体格式转换为标准格式
+            parsed_response = self._normalize_response_items(parsed_response)
+
+            if not parsed_response:
+                logger.warning(f"  > 块 {chunk_index} 归一化后无有效条目")
+                self._save_debug_response(str(parsed_response), chunk_index, "empty_after_normalize")
                 return []
-            
-            if not isinstance(parsed_response, list):
-                logger.warning(f"  > 块 {chunk_index} LLM返回的不是一个列表")
-                self._save_debug_response(f"类型: {type(parsed_response)}, 内容: {parsed_response}", chunk_index, "not_list")
-                return []
-            
+
+            logger.info(f"  > 块 {chunk_index} 归一化后得到 {len(parsed_response)} 个条目")
+
             for timeline_item in parsed_response:
-                if 'outline' not in timeline_item or 'start_time' not in timeline_item or 'end_time' not in timeline_item:
-                    logger.warning(f"  > 从LLM返回的某个JSON对象格式不正确: {timeline_item}")
-                    continue
                 
                 # 将 chunk_index 添加回对象中，以便后续步骤使用
                 timeline_item['chunk_index'] = chunk_index

@@ -7,6 +7,10 @@ import os
 from celery import Celery
 from celery.schedules import crontab
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Celery worker 启动时不会自动加载 .env，需手动加载
+load_dotenv(Path(__file__).parent.parent.parent / ".env", override=True)
 
 # 设置默认配置模块
 # os.environ.setdefault('CELERY_CONFIG_MODULE', 'backend.core.celery_app')
@@ -43,9 +47,11 @@ class CeleryConfig:
         'backend.tasks.processing.*': {'queue': 'processing'},
         'backend.tasks.video.*': {'queue': 'video'},
         'backend.tasks.notification.*': {'queue': 'notification'},
-        'backend.tasks.upload.*': {'queue': 'upload'},  # 添加upload任务路由
-        'backend.tasks.import_processing.*': {'queue': 'processing'},  # 导入任务路由
+        'backend.tasks.upload.*': {'queue': 'upload'},
+        'backend.tasks.import_processing.*': {'queue': 'processing'},
+        'backend.tasks.subtitle.*': {'queue': 'video'},
     }
+
     
     # 定时任务配置
     beat_schedule = {
@@ -76,7 +82,8 @@ celery_app.autodiscover_tasks([
     'backend.tasks.video', 
     'backend.tasks.notification',
     'backend.tasks.maintenance',
-    'backend.tasks.import_processing'  # 添加导入处理任务
+    'backend.tasks.import_processing',  # 添加导入处理任务
+    'backend.tasks.subtitle',
 ])
 
 if __name__ == '__main__':
