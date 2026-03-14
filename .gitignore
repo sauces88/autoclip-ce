@@ -99,3 +99,7 @@ dump.rdb
 nul
 settings.json
 .env
+
+.claude/settings.local.json
+frontend/yarn.lock
+test_apikey.py

@@ -101,8 +101,29 @@ def get_database_url() -> str:
     return settings.database_url
 
 def get_redis_url() -> str:
-    """获取Redis URL"""
-    return settings.redis_url
+    """获取Redis URL，如果配置了 SSH 隧道则重写 host:port"""
+    from .ssh_tunnel import get_redis_local_port
+    url = settings.redis_url
+    local_port = get_redis_local_port()
+    if local_port:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        # 替换 host:port 为隧道本地端口，保留其余部分（密码、db 等）
+        new_netloc = f"127.0.0.1:{local_port}"
+        if parsed.username:
+            cred = parsed.username
+            if parsed.password:
+                cred = f"{cred}:{parsed.password}"
+            new_netloc = f"{cred}@{new_netloc}"
+        url = urlunparse((
+            parsed.scheme, new_netloc, parsed.path,
+            parsed.params, parsed.query, parsed.fragment,
+        ))
+        import logging
+        logging.getLogger(__name__).info(
+            f"REDIS_URL 已通过 SSH 隧道重写: host -> 127.0.0.1:{local_port}"
+        )
+    return url
 
 def get_api_key() -> Optional[str]:
     """获取API密钥"""

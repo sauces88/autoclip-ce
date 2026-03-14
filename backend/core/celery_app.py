@@ -29,9 +29,10 @@ class CeleryConfig:
     timezone = 'Asia/Shanghai'
     enable_utc = True
     
-    # Redis配置
-    broker_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-    result_backend = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    # Redis配置（通过 get_redis_url 支持 SSH 隧道）
+    from .config import get_redis_url as _get_redis_url
+    broker_url = _get_redis_url()
+    result_backend = _get_redis_url()
     
     # 任务配置
     task_always_eager = os.getenv('CELERY_ALWAYS_EAGER', 'False').lower() == 'true'  # 生产环境异步执行

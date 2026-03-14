@@ -27,10 +27,10 @@ WEIGHTS = {name: w for name, w in STAGES}
 # 阶段顺序
 ORDER = [name for name, _ in STAGES]
 
-# Redis连接 - 使用项目现有的Redis配置
+# Redis连接 - 通过 get_redis_url 支持 SSH 隧道
 try:
-    # 从环境变量获取Redis URL，默认为本地地址
-    redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    from ..core.config import get_redis_url
+    redis_url = get_redis_url()
     r = redis.Redis.from_url(redis_url, decode_responses=True)
     # 测试连接
     r.ping()

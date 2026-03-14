@@ -30,7 +30,8 @@
       "mcp__MySQL__describe_table",
       "Bash(ffmpeg.exe:*)",
       "Bash(taskkill:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(grep:*)"
     ]
   },
   "hooks": {

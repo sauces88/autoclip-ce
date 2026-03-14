@@ -724,10 +724,41 @@ def _burn_subtitles(
                     duration = trim_end
                 cmd.extend(["-t", str(duration)])
             cmd.append(str(tmp_out))
+            # 获取视频时长用于进度计算
+            video_duration = _get_video_duration(video_path) or 0
+
             logger.info(f"烧录命令 trim_start={trim_start} trim_end={trim_end}: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, timeout=300, cwd=tmpdir)
-            if result.returncode != 0:
-                stderr = result.stderr.decode("utf-8", errors="replace")[-600:]
+
+            # 不设超时，流式输出进度
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmpdir,
+            )
+            stderr_lines = []
+
+            # 解析 FFmpeg 进度（从 stderr）
+            import re
+            while True:
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    decoded = line.decode("utf-8", errors="replace")
+                    stderr_lines.append(decoded)
+                    # 解析进度: frame=  123 fps= 45 ...
+                    time_match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", decoded)
+                    if time_match and video_duration > 0:
+                        h, m, s = int(time_match.group(1)), int(time_match.group(2)), float(time_match.group(3))
+                        current_time = h * 3600 + m * 60 + s
+                        progress = min(100, current_time / video_duration * 100)
+                        logger.info(f"字幕烧录进度: {progress:.1f}% ({current_time:.1f}s / {video_duration:.1f}s)")
+
+            returncode = process.wait()
+            stderr = "".join(stderr_lines)[-1000:]
+
+            if returncode != 0:
                 if "libass" in stderr.lower() or "no such filter" in stderr.lower():
                     logger.warning("FFmpeg 不支持 libass，跳过字幕烧录")
                 else:
@@ -737,9 +768,6 @@ def _burn_subtitles(
             shutil.copy2(str(tmp_out), str(output_path))
             logger.info(f"字幕烧录成功: {output_path.name}")
             return True
-    except subprocess.TimeoutExpired:
-        logger.error("字幕烧录超时")
-        return False
     except Exception as e:
         logger.error(f"字幕烧录异常: {e}")
         return False

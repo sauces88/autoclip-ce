@@ -42,7 +42,8 @@ def submit_video_pipeline_task(project_id: str, input_video_path: str, input_srt
             # 检查任务是否真的提交到队列
             import redis as _redis
             from urllib.parse import urlparse
-            _redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+            from ..core.config import get_redis_url as _get_redis_url
+            _redis_url = _get_redis_url()
             _parsed = urlparse(_redis_url)
             _db = int(_parsed.path.lstrip('/') or 0)
             r = _redis.Redis(host=_parsed.hostname, port=_parsed.port or 6379, db=_db)
